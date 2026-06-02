@@ -1,0 +1,17 @@
+name: bmm-etg-raster-fill
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - numpy
+  - scipy
+  - rasterio
+  - geopandas
+  - fiona
+  - shapely
+  - pyproj
+  - matplotlib
+  - pytest            # test runner (for tests/; optional at runtime)
+  - pip:
+    - tomli           # TOML reader (only needed if Python < 3.11)

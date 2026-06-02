@@ -1,0 +1,25 @@
+# Sample commands (Windows paths shown; adjust to your machine)
+
+# ── NWI workflow ──────────────────────────────────────────────────────────
+# 1. One-time: clip the CONUS BpS raster to the NWI extent.
+python prep_statewide.py --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif
+
+# 2. Prep a basin (clips BpS, generates config.toml).
+python prep_basin.py 053_PineValley
+#    Then drop the ETg raster + treatment shapefile into basins/053_PineValley/source/
+
+# 3. Run fill + diagnostics + ET-unit summary.
+python etg_baseline_fill.py 053_PineValley
+python diagnostics.py 053_PineValley
+python etunit_summary.py 053_PineValley
+#    or, all steps for every configured basin:
+python run_all.py
+
+
+# ── Custom (non-NWI) study area ───────────────────────────────────────────
+python prep_custom_basin.py SierraValley ^
+    --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif ^
+    --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp"
+
+# Then drop the ETg raster + treatment shapefile into basins/SierraValley/source/ and run:
+python etg_baseline_fill.py SierraValley
