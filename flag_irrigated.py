@@ -141,17 +141,36 @@ def _match_bps(src_path: Path, ref_profile: dict) -> np.ndarray:
     return dst
 
 
-def _build_basin_mask(grid_shape, grid_transform, etg_crs):
-    """Return a boolean in-basin mask (boundary_shp -> NWI -> None=all pixels)."""
+def _build_basin_mask(grid_shape, grid_transform, etg_crs, treatment_gdf):
+    """Return a boolean in-basin mask.
+
+    Resolution order: explicit boundary_shp -> NWI polygon -> dissolved extent
+    of the treatment shapefile (the ET units tile the basin) -> None (all pixels).
+    """
+    from shapely.ops import unary_union
     boundary_shp = getattr(cfg, "BOUNDARY_SHP", None)
+    boundary_configured = getattr(cfg, "BOUNDARY_SHP_CONFIGURED", False)
+    boundary_missing = getattr(cfg, "BOUNDARY_SHP_MISSING", False)
     nwi_path = _here / "NWI_Investigations_EPSG_32611.shp"
+    key = cfg.STUDY_AREA_NAME
+    looks_like_nwi = "_" in key and key.split("_", 1)[0].isdigit()
+
+    def _from_treatment(reason):
+        geoms = [g for g in treatment_gdf.geometry if g is not None and g.is_valid]
+        if not geoms:
+            _log(f"    {reason}; treatment shapefile has no usable geometry - "
+                 f"using all valid pixels")
+            return None
+        m = rasterize([(unary_union(geoms), 1)], out_shape=grid_shape,
+                      transform=grid_transform, fill=0, dtype=np.uint8).astype(bool)
+        _log(f"    {reason}; using the treatment shapefile extent as the "
+             f"boundary ({int(m.sum()):,} px)")
+        return m
 
     if boundary_shp is not None and Path(boundary_shp).exists():
         gdf_bnd = gpd.read_file(boundary_shp)
         if len(gdf_bnd) == 0:
-            _log("    WARNING: boundary shapefile empty - using all valid pixels")
-            return None
-        from shapely.ops import unary_union
+            return _from_treatment("configured boundary_shp is empty")
         geom = unary_union(gdf_bnd.geometry)
         if gdf_bnd.crs is not None and not gdf_bnd.crs.equals(etg_crs):
             geom = gpd.GeoSeries([geom], crs=gdf_bnd.crs).to_crs(etg_crs).iloc[0]
@@ -160,9 +179,10 @@ def _build_basin_mask(grid_shape, grid_transform, etg_crs):
         _log(f"    basin boundary pixels (custom): {int(mask.sum()):,}")
         return mask
 
-    key = cfg.STUDY_AREA_NAME
-    looks_like_nwi = "_" in key and key.split("_", 1)[0].isdigit()
-    if nwi_path.exists() and looks_like_nwi:
+    if boundary_configured and boundary_missing:
+        return _from_treatment("boundary_shp configured but file missing")
+
+    if looks_like_nwi and nwi_path.exists():
         gdf_nwi = gpd.read_file(nwi_path)
         m = gdf_nwi[gdf_nwi["Basin"] == key]
         if len(m) == 0:
@@ -176,10 +196,9 @@ def _build_basin_mask(grid_shape, grid_transform, etg_crs):
                              transform=grid_transform, fill=0, dtype=np.uint8).astype(bool)
             _log(f"    basin boundary pixels (NWI): {int(mask.sum()):,}")
             return mask
-        _log(f"    WARNING: '{key}' not found in NWI shapefile - using all valid pixels")
-    else:
-        _log("    No basin boundary configured - using all valid pixels")
-    return None
+        return _from_treatment(f"'{key}' not found in NWI shapefile")
+
+    return _from_treatment("no boundary_shp configured and not an NWI basin")
 
 
 def _pick_id_column(gdf):
@@ -209,8 +228,13 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
     etg_crs = prof["crs"]
     bps = _match_bps(cfg.BPS_TIF, prof)
 
+    # -- Read treatment polygons (also the boundary fallback source) ---------
+    gdf = gpd.read_file(cfg.TREATMENT_SHP)
+    if gdf.crs is not None and not gdf.crs.equals(etg_crs):
+        gdf = gdf.to_crs(etg_crs)
+
     # -- In-basin valid mask + per-BpS-class baseline ------------------------
-    basin = _build_basin_mask(grid_shape, grid_transform, etg_crs)
+    basin = _build_basin_mask(grid_shape, grid_transform, etg_crs, gdf)
     valid = np.isfinite(etg) & (etg > 0) & (bps > 0)
     if basin is not None:
         valid &= basin
@@ -233,10 +257,7 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
         def _bps_name(code, lut=None):
             return f"BpS {code}"
 
-    # -- Read treatment polygons --------------------------------------------
-    gdf = gpd.read_file(cfg.TREATMENT_SHP)
-    if gdf.crs is not None and not gdf.crs.equals(etg_crs):
-        gdf = gdf.to_crs(etg_crs)
+    # -- Treatment attributes -----------------------------------------------
     attr_scale = cfg.ATTR_SCALE
     attr_replace = cfg.ATTR_REPLACE
     has_scale = attr_scale in gdf.columns

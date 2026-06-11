@@ -443,23 +443,41 @@ def main(study_area: str | None = None) -> None:
     )
 
     # -- 4. Basin boundary mask (constrain training to within the basin) -----
-    # Priority:  (1) boundary_shp from config.toml  ->  (2) NWI shapefile.
+    # Resolution order for the training boundary:
+    #   1. boundary_shp from config.toml (explicit override)
+    #   2. the matching NWI polygon (for NWI-formatted basin keys)
+    #   3. the dissolved extent of the treatment shapefile -- the ET units tile
+    #      the basin, so their union defines it and no separate boundary file is
+    #      needed.  Set boundary_shp only when the treatment polygons cover less
+    #      than the full basin (e.g. an ag-fields-only shapefile).
     basin_mask = None
     boundary_shp = getattr(cfg, "BOUNDARY_SHP", None)
     boundary_configured = getattr(cfg, "BOUNDARY_SHP_CONFIGURED", False)
     boundary_missing = getattr(cfg, "BOUNDARY_SHP_MISSING", False)
     nwi_path = _here / "NWI_Investigations_EPSG_32611.shp"
+    basin_key = cfg.STUDY_AREA_NAME
+    looks_like_nwi = "_" in basin_key and basin_key.split("_", 1)[0].isdigit()
 
-    if boundary_configured and boundary_missing:
-        _log("  4 . WARNING: boundary_shp configured but file missing - "
-             "cannot build training mask; using all valid pixels")
+    def _mask_from_treatment(reason: str):
+        """Derive the training boundary from the dissolved treatment shapefile."""
+        from shapely.ops import unary_union
+        geoms = [g for g in gdf.geometry if g is not None and g.is_valid]
+        if not geoms:
+            _log(f"  4 . {reason}; treatment shapefile has no usable geometry - "
+                 f"using all valid pixels")
+            return None
+        m = rasterize([(unary_union(geoms), 1)], out_shape=grid_shape,
+                      transform=grid_transform, fill=0, dtype=np.uint8).astype(bool)
+        _log(f"  4 . {reason}; using the treatment shapefile extent as the "
+             f"training boundary ({int(m.sum()):,} px)")
+        return m
 
     if boundary_shp is not None and Path(boundary_shp).exists():
-        # -- Custom boundary from config.toml --------------------------------
+        # -- Explicit boundary from config.toml ------------------------------
         _log(f"  4 . Rasterizing basin boundary (custom: {Path(boundary_shp).name}) ...")
         gdf_bnd = gpd.read_file(boundary_shp)
         if len(gdf_bnd) == 0:
-            _log("    WARNING: boundary shapefile is empty - using all valid pixels")
+            basin_mask = _mask_from_treatment("configured boundary_shp is empty")
         else:
             from shapely.ops import unary_union
             bnd_geom = unary_union(gdf_bnd.geometry)
@@ -474,48 +492,38 @@ def main(study_area: str | None = None) -> None:
                 dtype=np.uint8,
             ).astype(bool)
             _log(f"    basin boundary pixels: {int(basin_mask.sum()):,}")
-
-    elif nwi_path.exists():
-        # -- Fall back to NWI shapefile --------------------------------------
-        basin_key = cfg.STUDY_AREA_NAME
-        looks_like_nwi = (
-            "_" in basin_key
-            and basin_key.split("_", 1)[0].isdigit()
-        )
-        if not looks_like_nwi:
-            _log(f"  4 . Custom basin ({basin_key}) - no boundary_shp configured "
-                 f"and basin_key is not NWI-formatted; training will use all "
-                 f"valid pixels")
+    elif boundary_configured and boundary_missing:
+        basin_mask = _mask_from_treatment("boundary_shp configured but file missing")
+    elif looks_like_nwi and nwi_path.exists():
+        # -- NWI polygon -----------------------------------------------------
+        _log("  4 . Rasterizing basin boundary (NWI) for training mask ...")
+        gdf_nwi = gpd.read_file(nwi_path)
+        nwi_match = gdf_nwi[gdf_nwi["Basin"] == basin_key]
+        if len(nwi_match) == 0:
+            compare_key = (basin_key.split("_", 1)[-1]
+                           if "_" in basin_key else basin_key)
+            nwi_match = gdf_nwi[
+                gdf_nwi["BasinName"].str.replace(" ", "") == compare_key
+            ]
+        if len(nwi_match) > 0:
+            nwi_geom = nwi_match.iloc[0].geometry
+            if nwi_match.crs is not None and not nwi_match.crs.equals(etg_crs):
+                nwi_series = gpd.GeoSeries([nwi_geom], crs=nwi_match.crs)
+                nwi_geom = nwi_series.to_crs(etg_crs).iloc[0]
+            basin_mask = rasterize(
+                [(nwi_geom, 1)],
+                out_shape=grid_shape,
+                transform=grid_transform,
+                fill=0,
+                dtype=np.uint8,
+            ).astype(bool)
+            _log(f"    basin boundary pixels: {int(basin_mask.sum()):,}")
         else:
-            _log("  4 . Rasterizing basin boundary (NWI) for training mask ...")
-            gdf_nwi = gpd.read_file(nwi_path)
-            nwi_match = gdf_nwi[gdf_nwi["Basin"] == basin_key]
-            if len(nwi_match) == 0:
-                compare_key = (basin_key.split("_", 1)[-1]
-                               if "_" in basin_key else basin_key)
-                nwi_match = gdf_nwi[
-                    gdf_nwi["BasinName"].str.replace(" ", "") == compare_key
-                ]
-            if len(nwi_match) > 0:
-                nwi_geom = nwi_match.iloc[0].geometry
-                if nwi_match.crs is not None and not nwi_match.crs.equals(etg_crs):
-                    nwi_series = gpd.GeoSeries([nwi_geom], crs=nwi_match.crs)
-                    nwi_geom = nwi_series.to_crs(etg_crs).iloc[0]
-                basin_mask = rasterize(
-                    [(nwi_geom, 1)],
-                    out_shape=grid_shape,
-                    transform=grid_transform,
-                    fill=0,
-                    dtype=np.uint8,
-                ).astype(bool)
-                _log(f"    basin boundary pixels: {int(basin_mask.sum()):,}")
-            else:
-                _log(f"    WARNING: basin key '{basin_key}' is NWI-formatted "
-                     f"but not found in NWI shapefile - training will use "
-                     f"all valid pixels")
+            basin_mask = _mask_from_treatment(
+                f"basin key '{basin_key}' not found in NWI shapefile")
     else:
-        _log("    No basin boundary found (no boundary_shp in config, "
-             "no NWI shapefile) - training will use all valid pixels")
+        basin_mask = _mask_from_treatment(
+            "no boundary_shp configured and not an NWI basin")
 
     # -- 5. Build training set (outside treatment zones, within basin) -------
     _log("5 . Assembling training data ...")

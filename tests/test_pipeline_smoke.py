@@ -165,6 +165,41 @@ def test_metadata_is_bps_only(pipeline):
         assert ml_token not in meta.lower(), f"unexpected ML token in metadata: {ml_token}"
 
 
+def test_boundary_derived_from_treatment(tmp_path_factory):
+    """Prepped with --treatment (no --boundary), the fill should derive the
+    training boundary from the treatment shapefile rather than using all pixels."""
+    work = tmp_path_factory.mktemp("noboundary")
+    for f in CODE_FILES:
+        shutil.copy2(PROJECT_ROOT / f, work / f)
+    for ext in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
+        src = PROJECT_ROOT / f"{NWI_STEM}{ext}"
+        if src.exists():
+            shutil.copy2(src, work / src.name)
+    (work / "basins" / "_template").mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "basins" / "_template" / "config.toml",
+                 work / "basins" / "_template" / "config.toml")
+
+    data = synth_data.generate(work / "_synth")
+    key = "NoBound"
+    source = work / "basins" / key / "source"
+    source.mkdir(parents=True)
+    shutil.copy2(data["etg"], source / "NoBound_ETg.tif")   # placed before prep
+
+    # Prep with --treatment only: no separate boundary.
+    _run("prep_custom_basin.py", key, "--treatment", str(data["treatment"]),
+         "--bps", str(data["bps"]), cwd=work)
+
+    # config.toml must not carry an active boundary_shp line.
+    cfg_txt = (work / "basins" / key / "config.toml").read_text()
+    assert all(not ln.strip().startswith("boundary_shp")
+               for ln in cfg_txt.splitlines()), "boundary_shp should be commented out"
+
+    _run("etg_baseline_fill.py", key, cwd=work)
+    meta = (work / "basins" / key / "output" / f"{key}_run_metadata.txt").read_text()
+    assert "basin_boundary_mask = yes" in meta, \
+        "fill did not build a training boundary from the treatment shapefile"
+
+
 def test_no_ml_dependencies_in_source():
     """The shipped pipeline must not import scikit-learn / lightgbm / whitebox."""
     banned = ("import lightgbm", "import sklearn", "from sklearn",

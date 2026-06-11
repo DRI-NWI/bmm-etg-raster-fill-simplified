@@ -140,29 +140,42 @@ def load_basin_from_toml(toml_path: Path) -> None:
     inputs = raw.get("inputs", {})
     source = raw.get("source", inputs)   # legacy: fall back to [inputs]
 
+    # Search order for a referenced file: an absolute path is used as-is;
+    # otherwise the name is looked for in source/, then input/, then the basin
+    # directory.  This makes the config forgiving about whether user files were
+    # dropped in source/ (the convention) or input/, and accepts full paths.
+    search_dirs = [d for d in (source_dir, input_dir, basin_dir)
+                   if d is not None and d.exists()]
+
     def _resolve(section, key, base_dir, fallback=None):
         val = section.get(key, fallback)
-        if val is None or val == "" or val.startswith("#"):
+        if val is None or val == "" or str(val).startswith("#"):
             return None
-        p = base_dir / val
-        return p if p.exists() else None
+        p = Path(val)
+        if p.is_absolute():
+            return p if p.exists() else None
+        ordered = [base_dir] + [d for d in search_dirs if d != base_dir]
+        for d in ordered:
+            cand = d / val
+            if cand.exists():
+                return cand
+        return None
 
-    # Prep-generated covariate (always from input/)
+    # Prep-generated covariate (normally input/, but search broadly).
     g["BPS_TIF"] = _resolve(inputs, "bps_tif", input_dir, "BpS.tif")
 
-    # User-supplied source files (from source/ if present, else input/)
+    # User-supplied source files.
     g["ETG_TIF"]       = _resolve(source, "etg_tif",       source_dir)
     g["TREATMENT_SHP"] = _resolve(source, "treatment_shp", source_dir)
 
     # Basin boundary shapefile (optional - used for the training mask).
-    # If not specified, the fill script falls back to NWI_Investigations
-    # (for NWI basins) or "use all valid pixels" (for custom basins).
+    # If not specified, the fill derives the boundary from the treatment
+    # shapefile (or the NWI outline for NWI basins).
     boundary_val = source.get("boundary_shp", "")
-    if boundary_val and not boundary_val.startswith("#"):
-        bp = source_dir / boundary_val
-        g["BOUNDARY_SHP"] = bp if bp.exists() else None
+    if boundary_val and not str(boundary_val).startswith("#"):
+        g["BOUNDARY_SHP"] = _resolve(source, "boundary_shp", source_dir)
         g["BOUNDARY_SHP_CONFIGURED"] = True
-        g["BOUNDARY_SHP_MISSING"] = not bp.exists()
+        g["BOUNDARY_SHP_MISSING"] = g["BOUNDARY_SHP"] is None
     else:
         g["BOUNDARY_SHP"] = None
         g["BOUNDARY_SHP_CONFIGURED"] = False

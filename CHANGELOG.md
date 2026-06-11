@@ -52,6 +52,14 @@ landscape just outside the boundary.
   small `[baseline]` section (`spatial_weight_radius_px`, `max_train_pixels`,
   `random_seed`).  Legacy `[model] spatial_fallback_radius_px` is still read for
   backward compatibility.
+- `boundary_shp` is now optional and redundant for the usual ET-unit workflow:
+  when it isn't set (and the basin isn't an NWI match), the fill and
+  `flag_irrigated.py` derive the training boundary from the dissolved extent of
+  the treatment shapefile. `prep_custom_basin.py` gained an optional
+  `--treatment` argument (use it instead of `--boundary` when the treatment
+  shapefile already covers the study area), and `--boundary` is no longer
+  required. An explicit `boundary_shp` still overrides, for cases where the
+  treatment polygons cover less than the full basin.
 - `prep_statewide.py` now only clips BpS and caches the BpS class lookup.
 - `prep_basin.py` / `prep_custom_basin.py` now only clip BpS (plus, for custom
   basins, copy the boundary shapefile) and generate `config.toml`.

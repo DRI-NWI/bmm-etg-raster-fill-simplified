@@ -27,6 +27,14 @@ Usage
         --boundary  /path/to/sierra_valley_boundary.shp \\
         --bps       /path/to/LF2020_BPS_CONUS.tif
 
+If your ET-unit / treatment shapefile already covers the whole study area, you
+can skip the separate boundary and let it define the area (the fill derives the
+training boundary from its extent):
+
+    python prep_custom_basin.py SierraValley \\
+        --treatment /path/to/sierra_valley_etunits.shp \\
+        --bps       /path/to/LF2020_BPS_CONUS.tif
+
 Outputs
 -------
     basins/<basin_key>/
@@ -213,7 +221,24 @@ def _copy_boundary(boundary_path: Path, dest_dir: Path) -> Path:
     return dest_dir / f"{dst_stem}.shp"
 
 
-def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str):
+def _copy_shapefile(src_shp: Path, dest_dir: Path) -> Path:
+    """Copy a shapefile (and sidecars) into ``dest_dir`` preserving its stem."""
+    stem = src_shp.stem
+    src_dir = src_shp.parent
+    for ext in (".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx",
+                ".geojson", ".gpkg"):
+        f = src_dir / f"{stem}{ext}"
+        if f.exists():
+            shutil.copy2(f, dest_dir / f"{stem}{ext}")
+    if src_shp.suffix.lower() in (".geojson", ".gpkg"):
+        dst = dest_dir / src_shp.name
+        if not dst.exists():
+            shutil.copy2(src_shp, dst)
+        return dst
+    return dest_dir / f"{stem}.shp"
+
+
+def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None):
     """Write a default config.toml for a custom basin."""
     config_path = basin_dir / "config.toml"
     if config_path.exists():
@@ -239,6 +264,13 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str):
     etg_tif = etg_candidates[0].name if etg_candidates else "# PLACE ETg RASTER HERE"
     treat_shp = treatment_shps[0].name if treatment_shps else "# PLACE TREATMENT SHP HERE"
 
+    # boundary_shp is optional: when not supplied, the fill derives the training
+    # boundary from the treatment shapefile's extent, so leave the line commented.
+    boundary_line = (
+        f'boundary_shp = "{boundary_name}"' if boundary_name
+        else '# boundary_shp = "boundary.shp"   # optional: defaults to the '
+             'treatment shapefile extent'
+    )
     import basin_config as _bc
     toml_content = _bc.render_config_template({
         "basin_key":         basin_key,
@@ -246,8 +278,7 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str):
         "basin_name":        basin_key,
         "etg_tif":           etg_tif,
         "treatment_shp":     treat_shp,
-        # Custom basins always have an explicit boundary from --boundary.
-        "boundary_shp_line": f'boundary_shp = "{boundary_name}"',
+        "boundary_shp_line": boundary_line,
     })
 
     with open(config_path, "w", encoding="utf-8") as f:
@@ -258,8 +289,9 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str):
 
 def prep_custom_basin(
     basin_key: str,
-    boundary_path: Path,
     bps_path: Path,
+    boundary_path: Path | None = None,
+    treatment_path: Path | None = None,
     *,
     buffer_m: float = CLIP_BUFFER_M,
     force: dict | None = None,
@@ -271,12 +303,20 @@ def prep_custom_basin(
     ----------
     basin_key : str
         Directory name under basins/ (e.g. "SierraValley").
-    boundary_path : Path
-        Shapefile / GeoJSON / GPKG defining the study-area boundary.
     bps_path : Path
         BpS raster (any extent >= study area; will be clipped).
+    boundary_path : Path, optional
+        Shapefile / GeoJSON / GPKG defining the study-area boundary.  When
+        omitted, the treatment shapefile (``treatment_path``) defines the area
+        and the fill derives the training boundary from its extent.
+    treatment_path : Path, optional
+        The treatment / ET-unit shapefile.  If given it is copied into source/
+        and (when no ``boundary_path`` is supplied) used as the clip geometry.
     buffer_m : float
-        Buffer around boundary for BpS clipping (meters).
+        Buffer around the area geometry for BpS clipping (meters).
+
+    At least one of ``boundary_path`` / ``treatment_path`` must be supplied to
+    define the clip area.
     """
     force = force or {}
 
@@ -286,19 +326,25 @@ def prep_custom_basin(
     _log(f"\n{'='*60}")
     _log(f"Preparing custom basin: {basin_key}")
 
-    # -- Read boundary -------------------------------------------------------
-    if not boundary_path.exists():
-        sys.exit(f"ERROR: boundary file not found: {boundary_path}")
-    gdf_bnd = gpd.read_file(boundary_path)
+    # The clip geometry comes from the boundary if given, else the treatment
+    # shapefile.  (When only the treatment shapefile is supplied, it both
+    # defines the area here and becomes the training boundary in the fill.)
+    area_path = boundary_path if boundary_path is not None else treatment_path
+    if area_path is None:
+        sys.exit("ERROR: supply --boundary or --treatment to define the area.")
+
+    # -- Read the area shapefile --------------------------------------------
+    if not area_path.exists():
+        sys.exit(f"ERROR: area file not found: {area_path}")
+    gdf_bnd = gpd.read_file(area_path)
     if len(gdf_bnd) == 0:
-        sys.exit(f"ERROR: boundary file is empty: {boundary_path}")
+        sys.exit(f"ERROR: area file is empty: {area_path}")
 
     bnd_crs = gdf_bnd.crs
     if bnd_crs is None:
-        sys.exit(f"ERROR: boundary file has no CRS: {boundary_path}")
+        sys.exit(f"ERROR: area file has no CRS: {area_path}")
 
-    _log(f"  Boundary CRS: {bnd_crs.to_string()}")
-    _log(f"  {len(gdf_bnd)} feature(s) in boundary")
+    _log(f"  Area source: {area_path.name}  ({len(gdf_bnd)} feature(s), {bnd_crs.to_string()})")
 
     # Target CRS: use the boundary CRS if projected, else auto-pick a UTM zone.
     if bnd_crs.is_projected:
@@ -309,7 +355,7 @@ def prep_custom_basin(
         hemisphere = "north" if centroid.y >= 0 else "south"
         epsg = 32600 + utm_zone if hemisphere == "north" else 32700 + utm_zone
         target_crs = rasterio.crs.CRS.from_epsg(epsg)
-        _log(f"  Boundary is geographic - auto-selected UTM: EPSG:{epsg}")
+        _log(f"  Area is geographic - auto-selected UTM: EPSG:{epsg}")
 
     _log(f"  Target CRS for basin: {target_crs.to_string()}")
 
@@ -334,11 +380,19 @@ def prep_custom_basin(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # -- Copy boundary into source/ ------------------------------------------
-    _log("  Copying boundary into source/ ...")
-    bnd_dst = _copy_boundary(boundary_path, source_dir)
-    boundary_name = bnd_dst.name
-    _log(f"    -> {boundary_name}")
+    # -- Copy the user shapefiles into source/ -------------------------------
+    boundary_name = None
+    if boundary_path is not None:
+        _log("  Copying boundary into source/ ...")
+        bnd_dst = _copy_boundary(boundary_path, source_dir)
+        boundary_name = bnd_dst.name
+        _log(f"    -> {boundary_name}")
+    if treatment_path is not None:
+        if not treatment_path.exists():
+            sys.exit(f"ERROR: treatment file not found: {treatment_path}")
+        _log("  Copying treatment shapefile into source/ ...")
+        t_dst = _copy_shapefile(treatment_path, source_dir)
+        _log(f"    -> {t_dst.name}")
 
     # -- Clip BpS ------------------------------------------------------------
     if not bps_path.exists():
@@ -383,11 +437,16 @@ def prep_custom_basin(
     # -- Generate config.toml ------------------------------------------------
     _generate_config(basin_dir, basin_key, boundary_name)
 
-    _log(f"\n  Done.  Place raw ETg raster and treatment shapefile in:\n"
-         f"    {source_dir.resolve()}/\n"
-         f"  (Prep-generated BpS is in {input_dir.resolve()}/)\n"
-         f"  Then run:\n"
-         f"    python etg_baseline_fill.py {basin_key}")
+    if treatment_path is not None:
+        _log(f"\n  Done.  Place the raw ETg raster in:\n    {source_dir.resolve()}/\n"
+             f"  (BpS and the treatment shapefile are already staged.)\n  Then run:\n"
+             f"    python etg_baseline_fill.py {basin_key}")
+    else:
+        _log(f"\n  Done.  Place raw ETg raster and treatment shapefile in:\n"
+             f"    {source_dir.resolve()}/\n"
+             f"  (Prep-generated BpS is in {input_dir.resolve()}/)\n"
+             f"  Then run:\n"
+             f"    python etg_baseline_fill.py {basin_key}")
     return True
 
 
@@ -398,9 +457,14 @@ def main():
     parser.add_argument("basin_key",
                         help="Name for this basin (used as directory name, "
                              "e.g. 'SierraValley')")
-    parser.add_argument("--boundary", type=Path, required=True,
-                        help="Shapefile / GeoJSON / GPKG defining the "
-                             "study-area boundary polygon")
+    parser.add_argument("--boundary", type=Path, default=None,
+                        help="Shapefile / GeoJSON / GPKG defining the study-area "
+                             "boundary polygon. Optional: if omitted, the "
+                             "treatment shapefile (--treatment) defines the area "
+                             "and the fill derives the training boundary from it.")
+    parser.add_argument("--treatment", type=Path, default=None,
+                        help="Treatment / ET-unit shapefile. Copied into source/; "
+                             "used as the clip area when --boundary is omitted.")
     parser.add_argument("--bps", type=Path, required=True,
                         help="BpS raster (any extent >= study area)")
     parser.add_argument("--buffer-m", type=float, default=CLIP_BUFFER_M,
@@ -410,6 +474,9 @@ def main():
                         help="Rebuild BpS.tif even if already present")
     parser.add_argument("--force-bps", action="store_true", help="Rebuild BpS.tif")
     args = parser.parse_args()
+
+    if args.boundary is None and args.treatment is None:
+        parser.error("supply --boundary and/or --treatment to define the area.")
 
     force_dict = {
         "all": bool(args.force),
@@ -421,8 +488,9 @@ def main():
 
     prep_custom_basin(
         basin_key=args.basin_key,
-        boundary_path=args.boundary,
         bps_path=args.bps,
+        boundary_path=args.boundary,
+        treatment_path=args.treatment,
         buffer_m=args.buffer_m,
         force=force_dict,
     )

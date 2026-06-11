@@ -205,7 +205,7 @@ Each basin gets a `config.toml` with sensible defaults. Edit as needed:
 |-----------|---------|---------|
 | `[source] etg_tif` | -- | ETg raster filename (in `source/`) |
 | `[source] treatment_shp` | -- | Treatment shapefile filename |
-| `[source] boundary_shp` | -- | Optional basin boundary shapefile (custom basins) |
+| `[source] boundary_shp` | -- | Optional. Training-boundary shapefile. If omitted, the boundary is taken from the treatment shapefile's extent (or the NWI outline for NWI basins) |
 | `buffer_m` | `90.0` | Buffer distance (m) around treatment polygons |
 | `feather_width_px` | `4` | Gaussian feathering sigma in pixels |
 | `baseline_adjust` | `1.0` | Expert adjustment scalar (0.8 = reduce 20%) |
@@ -247,6 +247,20 @@ generates a `config.toml` with a `[source]` section that references it. Drop you
 ETg raster and treatment shapefile into `source/`, then run the fill. If your
 boundary uses a geographic CRS (e.g. EPSG:4326), the script auto-detects the
 appropriate UTM zone from the centroid.
+
+If your ET-unit / treatment shapefile already covers the whole study area, you
+don't need a separate boundary - pass it as `--treatment` and the fill derives the
+training boundary from its extent:
+
+```bash
+python prep_custom_basin.py SierraValley \
+    --treatment /path/to/sierra_valley_etunits.shp \
+    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+
+This clips BpS to the treatment shapefile's extent, copies it into `source/`, and
+generates a `config.toml` with `boundary_shp` left commented out. Drop your ETg
+raster into `source/` and run the fill.
 
 The resulting basin directory is identical in structure to an NWI basin, and all
 downstream scripts work the same way.
@@ -404,9 +418,10 @@ This section summarizes `etg_baseline_fill.py`.
    and burned into a binary treatment-zone mask. A per-pixel expert-adjustment raster
    is built from the basin-wide default plus any per-polygon overrides.
 3. **Align BpS to the ETg grid** via nearest-neighbor resampling (categorical data).
-4. **Build the basin boundary mask.** The boundary (either `boundary_shp` from the
-   config, or the matching NWI polygon) constrains training pixels to within the
-   basin. Custom basins without a configured boundary use all valid pixels.
+4. **Build the basin boundary mask.** The training boundary is resolved in order:
+   `boundary_shp` from the config, then the matching NWI polygon, then the dissolved
+   extent of the treatment shapefile (the ET units tile the basin, so the file
+   defines it). This constrains training pixels to within the basin.
 5. **Assemble training data and per-BpS means.** Training pixels are those outside
    treatment zones, within the basin, with a valid BpS class and ETg > 0. The mean
    ETg of each BpS class is recorded (with within-class standard deviation and

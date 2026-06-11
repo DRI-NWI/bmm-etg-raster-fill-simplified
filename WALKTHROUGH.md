@@ -225,11 +225,28 @@ For an area that isn't an NWI basin, use `prep_custom_basin.py`.
 
 ### What you need
 
-- A boundary shapefile (or GeoJSON / GPKG) for the study area.
 - The CONUS BpS raster.
-- Your ETg raster and treatment shapefile.
+- Your ETg raster and treatment / ET-unit shapefile.
+- Optionally, a separate boundary shapefile (only if the treatment polygons
+  don't cover the whole study area).
 
 ### Prep the basin
+
+If your ET-unit / treatment shapefile already covers the study area (the usual
+case), let it define the area - no separate boundary needed:
+
+```bash
+python prep_custom_basin.py SierraValley \
+    --treatment /path/to/sierra_valley_etunits.shp \
+    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+
+This clips BpS to the treatment shapefile's extent, copies it into `source/`, and
+writes a `config.toml` with `boundary_shp` left commented out; the fill derives the
+training boundary from the treatment shapefile.
+
+If you do have a distinct basin outline (e.g. the treatment shapefile is only the
+irrigated fields), pass it as `--boundary` instead:
 
 ```bash
 python prep_custom_basin.py SierraValley \
@@ -237,14 +254,12 @@ python prep_custom_basin.py SierraValley \
     --bps       /path/to/LF2020_BPS_CONUS.tif
 ```
 
-This clips BpS to the boundary (auto-detecting a UTM zone if the boundary is in a
-geographic CRS), copies the boundary into `source/boundary.shp`, and writes a
-`config.toml` whose `[source]` section references the boundary.
+Either way the script auto-detects a UTM zone if the input is in a geographic CRS.
 
 ### Place your data and run
 
-Drop your ETg raster and treatment shapefile into `basins/SierraValley/source/`,
-review `config.toml`, then:
+Drop your ETg raster into `basins/SierraValley/source/` (and the treatment
+shapefile too, if you used `--boundary`), review `config.toml`, then:
 
 ```bash
 python etg_baseline_fill.py SierraValley
@@ -254,7 +269,8 @@ python etunit_summary.py SierraValley
 
 ### Key differences from NWI basins
 
-- The training mask comes from your `boundary_shp`, not the NWI shapefile.
+- The training mask comes from your `boundary_shp` if set, otherwise the
+  treatment shapefile's extent - not the NWI shapefile.
 - BpS is clipped from the CONUS source you pass, not from `statewide/`.
 - Everything downstream is identical to an NWI basin.
 
