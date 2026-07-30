@@ -34,7 +34,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CODE_FILES = [
     "basin_config.py", "bps_utils.py", "etg_baseline_fill.py",
     "diagnostics.py", "etunit_summary.py", "prep_custom_basin.py",
-    "prep_basin.py", "run_all.py", "flag_irrigated.py",
+    "prep_basin.py", "prep_statewide.py", "prep_humboldt.py",
+    "run_all.py", "flag_irrigated.py",
 ]
 NWI_STEM = "NWI_Investigations_EPSG_32611"
 

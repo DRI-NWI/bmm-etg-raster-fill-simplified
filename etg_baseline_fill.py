@@ -214,11 +214,13 @@ def _spatially_weighted_bps_mean(
         vals_smooth = gaussian_filter(vals, sigma=sigma, mode="constant")
         counts_smooth = gaussian_filter(counts, sigma=sigma, mode="constant")
 
-        # Where counts_smooth is near zero, no nearby training pixels exist
+        # Where counts_smooth is near zero, no nearby training pixels exist.
+        # Divide only where the count is real, so an empty window falls back to
+        # the basin-wide class mean without raising a divide-by-zero warning.
         has_local = counts_smooth > 1e-10
-        local_mean = np.where(has_local,
-                              vals_smooth / counts_smooth,
-                              bps_mean_map.get(b, global_mean))
+        local_mean = np.full(bps.shape, bps_mean_map.get(b, global_mean),
+                             dtype=np.float64)
+        np.divide(vals_smooth, counts_smooth, out=local_mean, where=has_local)
 
         result[class_mask] = local_mean[class_mask].astype(np.float32)
 
@@ -458,6 +460,13 @@ def main(study_area: str | None = None) -> None:
     basin_key = cfg.STUDY_AREA_NAME
     looks_like_nwi = "_" in basin_key and basin_key.split("_", 1)[0].isdigit()
 
+    # When the treatment shapefile is used as the training boundary, we assume
+    # its polygons tile the basin.  If they only cover the irrigated fields,
+    # the boundary is far smaller than the ETg extent and training collapses to
+    # whatever is left outside the buffered treatment zones.  Warn below this
+    # share of the valid ETg extent so a thin training set is never silent.
+    MIN_BOUNDARY_COVERAGE = 0.25
+
     def _mask_from_treatment(reason: str):
         """Derive the training boundary from the dissolved treatment shapefile."""
         from shapely.ops import unary_union
@@ -468,8 +477,18 @@ def main(study_area: str | None = None) -> None:
             return None
         m = rasterize([(unary_union(geoms), 1)], out_shape=grid_shape,
                       transform=grid_transform, fill=0, dtype=np.uint8).astype(bool)
+        n_mask = int(m.sum())
         _log(f"  4 . {reason}; using the treatment shapefile extent as the "
-             f"training boundary ({int(m.sum()):,} px)")
+             f"training boundary ({n_mask:,} px)")
+
+        n_extent = int(original_valid.sum())
+        coverage = n_mask / n_extent if n_extent else 1.0
+        if coverage < MIN_BOUNDARY_COVERAGE:
+            _log(f"    WARNING: that boundary covers only {coverage:.0%} of the "
+                 f"valid ETg extent ({n_mask:,} of {n_extent:,} px).")
+            _log(f"    The ET units may not tile the basin, which leaves few "
+                 f"pixels to train on and biases the baseline.  If so, set "
+                 f"boundary_shp in config.toml to a basin outline.")
         return m
 
     if boundary_shp is not None and Path(boundary_shp).exists():

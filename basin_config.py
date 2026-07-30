@@ -25,6 +25,7 @@ Usage in downstream scripts:
     # Now use cfg.ETG_TIF, cfg.OUT_DIR, cfg.BUFFER_M, etc.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -73,7 +74,6 @@ RANDOM_SEED      = 42
 FLAG_RATIO_THRESH  = 1.5        # flag if polygon mean ETg >= ratio x its BpS-class baseline
 FLAG_MIN_EXCESS_FT = 0.3        # ...and at least this many ft/yr above the baseline
 FLAG_BASELINE_PCTL = 50.0       # per-BpS-class baseline percentile over in-basin pixels (50 = median)
-FLAG_TRIGGER_ATTR  = "autoflag" # attribute the flag decision is written into
 
 # Output
 COMPRESS        = "DEFLATE"
@@ -212,7 +212,6 @@ def load_basin_from_toml(toml_path: Path) -> None:
     g["FLAG_RATIO_THRESH"]  = float(flag.get("ratio_thresh", 1.5))
     g["FLAG_MIN_EXCESS_FT"] = float(flag.get("min_excess_ft", 0.3))
     g["FLAG_BASELINE_PCTL"] = float(flag.get("baseline_pctl", 50.0))
-    g["FLAG_TRIGGER_ATTR"]  = flag.get("trigger_attr", "autoflag")
 
     # -- CRS overrides -------------------------------------------------------
     g["CRS_OVERRIDES"] = raw.get("crs_overrides", {})
@@ -272,6 +271,58 @@ def render_config_template(substitutions: dict) -> str:
         )
     tpl = Template(TEMPLATE_PATH.read_text(encoding="utf-8"))
     return tpl.substitute(substitutions)
+
+
+# -- Placeholder back-fill ---------------------------------------------------
+# A freshly generated config.toml carries "# PLACE ..." placeholders for the
+# two user-supplied files, because prep runs before those files are dropped in.
+# Re-running prep after they arrive fills the placeholders in, and ONLY the
+# placeholders: any value the user has set by hand is left alone.
+
+PLACEHOLDER_PREFIX = "# PLACE"
+
+_SOURCE_FIELD_RE = {
+    "etg_tif":       re.compile(r'^(\s*etg_tif\s*=\s*)"([^"]*)"', re.MULTILINE),
+    "treatment_shp": re.compile(r'^(\s*treatment_shp\s*=\s*)"([^"]*)"', re.MULTILINE),
+}
+
+
+def is_placeholder(value) -> bool:
+    """True if a config value is an unfilled '# PLACE ...' placeholder."""
+    return value is None or str(value).strip().startswith(PLACEHOLDER_PREFIX)
+
+
+def backfill_source_files(config_path: Path, **filenames) -> list[str]:
+    """Replace unfilled ``[source]`` placeholders in an existing config.toml.
+
+    Accepts ``etg_tif=`` and/or ``treatment_shp=`` keyword arguments.  A field
+    is written only when its current value is still a ``# PLACE ...``
+    placeholder and a real filename was detected, so user edits are never
+    overwritten.  Comments, formatting, and every other line are preserved.
+
+    Returns the list of field names that were filled in (empty if none).
+    """
+    config_path = Path(config_path)
+    if not config_path.exists():
+        return []
+    text = config_path.read_text(encoding="utf-8")
+    filled = []
+
+    for key, new_value in filenames.items():
+        if not new_value or is_placeholder(new_value):
+            continue
+        pat = _SOURCE_FIELD_RE.get(key)
+        if pat is None:
+            continue
+        m = pat.search(text)
+        if m is None or not is_placeholder(m.group(2)):
+            continue      # field absent, or already set by the user
+        text = text[:m.start()] + f'{m.group(1)}"{new_value}"' + text[m.end():]
+        filled.append(key)
+
+    if filled:
+        config_path.write_text(text, encoding="utf-8")
+    return filled
 
 
 # -- Helpers -----------------------------------------------------------------

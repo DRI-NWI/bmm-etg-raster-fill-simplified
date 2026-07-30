@@ -1,7 +1,13 @@
 # ── Data directories (too large for GitHub) ────────────────────────────────
 # Place study-area data in these folders locally; they are NOT tracked.
-statewide/
-basins/
+# Two small files inside them ARE tracked, because the workflow does not run
+# without them (note the trailing /*, so git still descends into the folder):
+#   basins/_template/config.toml   the template every prep script renders from
+#   statewide/bps_lookup.json      LANDFIRE class names + colours (180 KB)
+statewide/*
+!statewide/bps_lookup.json
+basins/*
+!basins/_template/
 Humboldt_Data/RASTERS/
 Humboldt_Data/SHAPEFILE/*
 !Humboldt_Data/SHAPEFILE/Read_Me.txt

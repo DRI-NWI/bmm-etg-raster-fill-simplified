@@ -6,6 +6,9 @@ Post-run evaluation and visual sanity checks for the ETg baseline-fill workflow.
 
 Generates diagnostic plots and console distribution summaries:
 
+Writes seven PNGs.  The eighth diagnostic figure in output/,
+``{basin_key}_diag_pct_change_map.png``, is written by etg_baseline_fill.py.
+
   1. Histogram — ETg distributions (outside vs treatment, before and after).
   2. Scatter — predicted baseline vs. original ETg for treatment-zone pixels.
   3. BpS box-plots — ETg by vegetation class (outside vs treatment).
@@ -17,7 +20,10 @@ Generates diagnostic plots and console distribution summaries:
 
 Usage:
     cd <project folder>
-    python diagnostics.py
+    python diagnostics.py 053_PineValley
+    python diagnostics.py --all [--skip KEY ...]
+    python diagnostics.py --only KEY [KEY ...]
+    python diagnostics.py --list
 
 License: MIT (see LICENSE)
 """
@@ -132,7 +138,7 @@ def main(study_area: str | None = None):
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_histogram.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / 'diag_histogram.png'}")
+    print(f"  → {out / f'{sa}_diag_histogram.png'}")
 
     # ── 2. Scatter: baseline vs original (treatment zones) ───────────────────
     print("Plotting scatter …")
@@ -151,7 +157,7 @@ def main(study_area: str | None = None):
         fig.tight_layout()
         fig.savefig(out / f"{sa}_diag_scatter.png", dpi=150)
         plt.close(fig)
-        print(f"  → {out / 'diag_scatter.png'}")
+        print(f"  → {out / f'{sa}_diag_scatter.png'}")
 
     # ── 3. Per-BpS box-plots ─────────────────────────────────────────────────
     print("Plotting BpS box-plots …")
@@ -181,7 +187,7 @@ def main(study_area: str | None = None):
             fig.tight_layout()
             fig.savefig(out / f"{sa}_diag_bps_boxplots.png", dpi=150)
             plt.close(fig)
-            print(f"  → {out / 'diag_bps_boxplots.png'}")
+            print(f"  → {out / f'{sa}_diag_bps_boxplots.png'}")
 
     # ── 4. Map panels ────────────────────────────────────────────────────────
     print("Plotting map panels …")
@@ -200,7 +206,7 @@ def main(study_area: str | None = None):
                  label="ETg (ft/yr)")
     fig.savefig(out / f"{sa}_diag_map_panels.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / 'diag_map_panels.png'}")
+    print(f"  → {out / f'{sa}_diag_map_panels.png'}")
 
     # ── 5. Difference map ────────────────────────────────────────────────────
     print("Plotting difference map …")
@@ -218,7 +224,7 @@ def main(study_area: str | None = None):
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_difference_map.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / 'diag_difference_map.png'}")
+    print(f"  → {out / f'{sa}_diag_difference_map.png'}")
 
     # ── 6. Treatment-zone map ────────────────────────────────────────────────
     print("Plotting treatment-zone map …")
@@ -239,7 +245,7 @@ def main(study_area: str | None = None):
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_treatment_map.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / 'diag_treatment_map.png'}")
+    print(f"  → {out / f'{sa}_diag_treatment_map.png'}")
 
     # ── 7. Feather weight map (if feathering was used) ───────────────────────
     feather_path = out / "feather_weight.tif"
@@ -269,7 +275,7 @@ def main(study_area: str | None = None):
         fig.tight_layout()
         fig.savefig(out / f"{sa}_diag_feather_map.png", dpi=150)
         plt.close(fig)
-        print(f"  → {out / 'diag_feather_map.png'}")
+        print(f"  → {out / f'{sa}_diag_feather_map.png'}")
 
     # ── Console summary ──────────────────────────────────────────────────────
     print("\n── Distribution summary ──────────────────────────────")

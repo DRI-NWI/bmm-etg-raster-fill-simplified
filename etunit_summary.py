@@ -18,7 +18,10 @@ data-driven uncertainty envelope.
 Usage
 -----
     cd <project folder>
-    python etunit_summary.py
+    python etunit_summary.py 053_PineValley
+    python etunit_summary.py --all [--skip KEY ...]
+    python etunit_summary.py --only KEY [KEY ...]
+    python etunit_summary.py --list
 
 All paths are read from the basin's ``config.toml`` (via basin_config.py).
 

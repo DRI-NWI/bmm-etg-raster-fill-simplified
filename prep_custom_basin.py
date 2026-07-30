@@ -239,11 +239,13 @@ def _copy_shapefile(src_shp: Path, dest_dir: Path) -> Path:
 
 
 def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None):
-    """Write a default config.toml for a custom basin."""
+    """Write a default config.toml for a custom basin.
+
+    An existing config.toml is never overwritten, except that the two
+    ``# PLACE ...`` placeholders are filled in once the matching files show up
+    in source/.  Values you set by hand stay as you left them.
+    """
     config_path = basin_dir / "config.toml"
-    if config_path.exists():
-        _log("  config.toml already exists - preserving your edits")
-        return
 
     source_dir = basin_dir / "source"
     input_dir = basin_dir / "input"
@@ -264,6 +266,18 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None)
     etg_tif = etg_candidates[0].name if etg_candidates else "# PLACE ETg RASTER HERE"
     treat_shp = treatment_shps[0].name if treatment_shps else "# PLACE TREATMENT SHP HERE"
 
+    import basin_config as _bc
+
+    if config_path.exists():
+        filled = _bc.backfill_source_files(
+            config_path, etg_tif=etg_tif, treatment_shp=treat_shp)
+        if filled:
+            _log(f"  config.toml already exists - filled in {', '.join(filled)} "
+                 f"(your other edits are untouched)")
+        else:
+            _log("  config.toml already exists - preserving your edits")
+        return
+
     # boundary_shp is optional: when not supplied, the fill derives the training
     # boundary from the treatment shapefile's extent, so leave the line commented.
     boundary_line = (
@@ -271,7 +285,6 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None)
         else '# boundary_shp = "boundary.shp"   # optional: defaults to the '
              'treatment shapefile extent'
     )
-    import basin_config as _bc
     toml_content = _bc.render_config_template({
         "basin_key":         basin_key,
         "basin_id":          "",
@@ -412,7 +425,14 @@ def prep_custom_basin(
             _log("    -> BpS.tif color table + RAT embedded; "
                  "BpS.clr + BpS.qml sidecars written")
         else:
-            _log("    -> BpS.clr + BpS.qml sidecars written (GDAL embed skipped)")
+            try:
+                from osgeo import gdal  # noqa: F401
+                why = "raster dtype is not integer"
+            except ImportError:
+                why = ("the osgeo/gdal Python bindings are not installed; "
+                       "conda install -c conda-forge gdal")
+            _log(f"    -> BpS.clr + BpS.qml sidecars written "
+                 f"(color table + RAT not embedded: {why})")
 
     try:
         from bps_utils import load_bps_lookup

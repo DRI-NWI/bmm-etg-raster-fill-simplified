@@ -145,12 +145,14 @@ def _clip_from_statewide(
 def _generate_default_config(basin_dir: Path, basin_key: str,
                              basin_id: str, basin_name: str):
     """
-    Write a default config.toml for a basin.  NEVER overwrites an existing one.
+    Write a default config.toml for a basin.
+
+    An existing config.toml is never overwritten.  The one exception is the
+    two ``# PLACE ...`` placeholders: once the ETg raster and treatment
+    shapefile are in source/, re-running prep fills those in.  Any value you
+    have set by hand stays as you left it.
     """
     config_path = basin_dir / "config.toml"
-    if config_path.exists():
-        _log("  config.toml already exists - preserving your edits")
-        return
 
     # Scan source/ (preferred) then input/ (legacy) for likely ETg + treatment files.
     source_dir = basin_dir / "source"
@@ -172,9 +174,20 @@ def _generate_default_config(basin_dir: Path, basin_key: str,
     etg_tif = etg_candidates[0].name if etg_candidates else "# PLACE ETg RASTER HERE"
     treat_shp = treatment_shps[0].name if treatment_shps else "# PLACE TREATMENT SHP HERE"
 
+    import basin_config as _bc
+
+    if config_path.exists():
+        filled = _bc.backfill_source_files(
+            config_path, etg_tif=etg_tif, treatment_shp=treat_shp)
+        if filled:
+            _log(f"  config.toml already exists - filled in {', '.join(filled)} "
+                 f"(your other edits are untouched)")
+        else:
+            _log("  config.toml already exists - preserving your edits")
+        return
+
     # Render the config.toml from basins/_template/config.toml.  To change
     # defaults for new NWI basins, edit the template file - not this script.
-    import basin_config as _bc
     toml_content = _bc.render_config_template({
         "basin_key":         basin_key,
         "basin_id":          basin_id,
@@ -256,8 +269,14 @@ def prep_one_basin(
                 _log("    -> BpS.tif color table + RAT embedded; "
                      "BpS.clr + BpS.qml sidecars written")
             else:
-                _log("    -> BpS.clr + BpS.qml sidecars written "
-                     "(GDAL embed skipped - non-integer dtype or GDAL missing)")
+                try:
+                    from osgeo import gdal  # noqa: F401
+                    why = "raster dtype is not integer"
+                except ImportError:
+                    why = ("the osgeo/gdal Python bindings are not installed; "
+                           "conda install -c conda-forge gdal")
+                _log(f"    -> BpS.clr + BpS.qml sidecars written "
+                     f"(color table + RAT not embedded: {why})")
     except Exception as e:
         _log(f"    (BpS symbology skipped: {e})")
 

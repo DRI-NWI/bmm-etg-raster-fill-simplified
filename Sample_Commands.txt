@@ -1,5 +1,17 @@
 # Sample commands (Windows paths shown; adjust to your machine)
 
+# ── Setup check ───────────────────────────────────────────────────────────
+conda env create -f environment.yml --solver=classic
+conda activate bmm-etg-raster-fill
+python -c "from osgeo import gdal; print(gdal.__version__)"
+#    If that import fails:  conda install -c conda-forge gdal
+#    (needed only by prep_statewide.py, when it builds bps_lookup.json, and
+#     by the colour-table embed in each basin's BpS.tif.  Build the lookup
+#     without gdal and every class comes out as "BpS 1073" with a grey
+#     palette, and everything downstream inherits that.)
+pytest -q
+
+
 # ── NWI workflow ──────────────────────────────────────────────────────────
 # 1. One-time: clip the CONUS BpS raster to the NWI extent.
 python prep_statewide.py --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif
@@ -7,6 +19,8 @@ python prep_statewide.py --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\
 # 2. Prep a basin (clips BpS, generates config.toml).
 python prep_basin.py 053_PineValley
 #    Then drop the ETg raster + treatment shapefile into basins/053_PineValley/source/
+#    and re-run the same command to fill in the two filenames:
+python prep_basin.py 053_PineValley
 
 # 3. Run fill + diagnostics + ET-unit summary.
 python etg_baseline_fill.py 053_PineValley
@@ -16,10 +30,38 @@ python etunit_summary.py 053_PineValley
 python run_all.py
 
 
+# ── Optional: auto-flag irrigation-influenced polygons ────────────────────
+# Proposes which polygons need treatment, so you start from a first pass.
+# Writes <treatment>_autoflag.shp into source/; reports go to output/.
+python flag_irrigated.py 053_PineValley
+python flag_irrigated.py 053_PineValley --ratio 1.4 --min-excess 0.25
+python flag_irrigated.py 053_PineValley --mirror-to rplc_rt
+#    Review 'autoflag' in QGIS, edit where you disagree, then re-run
+#    (your edits stick).  Pass --reset to recompute from scratch.
+
+
 # ── Custom (non-NWI) study area ───────────────────────────────────────────
+# If the ET-unit shapefile tiles the study area, let it define the boundary:
+python prep_custom_basin.py SierraValley ^
+    --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif ^
+    --treatment "C:\path\to\sierra_valley_etunits.shp"
+
+# If it only covers the irrigated / phreatophyte ground, pass a real basin
+# outline instead, or the fill will have very little left to train on:
 python prep_custom_basin.py SierraValley ^
     --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif ^
     --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp"
 
-# Then drop the ETg raster + treatment shapefile into basins/SierraValley/source/ and run:
+# Then drop the ETg raster (and the treatment shapefile, if you used
+# --boundary) into basins/SierraValley/source/, re-run the prep command to
+# fill in the filenames, and run:
 python etg_baseline_fill.py SierraValley
+
+
+# ── Batch ─────────────────────────────────────────────────────────────────
+python run_all.py --list                       # readiness of every basin
+python run_all.py --dry-run                    # what would be processed
+python run_all.py 053_PineValley 042_MarysRiverArea
+python etg_baseline_fill.py --all --skip 053_PineValley
+python diagnostics.py --only 042_MarysRiverArea 073A_LovelockValley
+python flag_irrigated.py --all

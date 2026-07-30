@@ -119,11 +119,15 @@ values smoothly into the surrounding raw ETg landscape.
 
 ## Repository structure
 
+Data folders (`statewide/`, `basins/`) are not tracked in git, apart from two
+small files the workflow cannot start without: `basins/_template/config.toml`
+and `statewide/bps_lookup.json`. Everything else in them is regenerated locally.
+
 ```
 project/
     statewide/                  BpS clipped to the NWI extent (one-time prep)
-        BpS_statewide.tif
-        bps_lookup.json         Cached BpS class lookup (code, R, G, B, name)
+        BpS_statewide.tif       (local only, ~100 MB)
+        bps_lookup.json         Cached BpS class lookup (code, R, G, B, name) -- tracked
 
     basins/                     Per-basin directories (257 NWI basins)
         053_PineValley/
@@ -134,6 +138,7 @@ project/
         _template/
             config.toml         Template used by prep scripts to generate each
                                 basin's config.toml.  Edit to change defaults.
+                                Tracked in git; prep fails without it.
 
     prep_statewide.py       One-time: clip CONUS BpS to NWI extent
     prep_basin.py           Per-basin: clip BpS + generate config.toml (NWI)
@@ -147,9 +152,13 @@ project/
     etunit_summary.py       ET-unit-level summary CSV (area, volume, rates)
     run_all.py              Orchestrator: batch-process multiple basins
     NWI_Investigations_EPSG_32611.shp  Basin boundaries, 257 areas (EPSG:32611)
+    tests/                  Self-contained pytest suite (synthetic data)
     environment.yml         Conda environment specification
     README.md               This file
     WALKTHROUGH.md          Step-by-step guide for new users
+    COOKBOOK_PineValley.md  Worked example: one basin, real output, expected numbers
+    Sample_Commands.txt     Copy-paste command reference
+    ETg_fill_methodology.docx  Methodology write-up
     AI_DISCLOSURE.md        AI-assisted development disclosure
     CHANGELOG.md            Version history
     LICENSE                 MIT license
@@ -157,6 +166,11 @@ project/
 
 
 ## Quick start
+
+New to this workflow? Run [COOKBOOK_PineValley.md](COOKBOOK_PineValley.md)
+first. It walks one basin end to end with the console output printed beside
+every command and the numbers a correct run produces, so you can confirm your
+install before trusting a basin you don't already know the answer for.
 
 ### 1. Install dependencies
 
@@ -166,7 +180,16 @@ conda activate bmm-etg-raster-fill
 ```
 
 Key packages: `numpy`, `scipy`, `rasterio`, `geopandas`, `fiona`, `shapely`,
-`pyproj`, `matplotlib`, and `tomli` (only for Python < 3.11).
+`pyproj`, `matplotlib`, `gdal`, and `tomli` (only for Python < 3.11).
+
+`gdal` supplies the `osgeo` Python bindings, which read the LANDFIRE class
+names and colours out of the BpS raster attribute table. Installing `rasterio`
+alone does not provide them. Exactly two steps need it: `prep_statewide.py`,
+when it builds `statewide/bps_lookup.json`, and the colour-table embed inside
+each basin's `input/BpS.tif`. Everything downstream reads the cached lookup, so
+a good `bps_lookup.json` (one ships with the repo) covers the rest. Build that
+file without gdal and it comes out with no class names at all, which then
+propagates into every log and figure.
 
 ### 2. Prepare the statewide BpS (one time)
 
@@ -231,6 +254,30 @@ python run_all.py --dry-run
 python run_all.py --list
 ```
 
+### Batch and utility flags
+
+The four per-basin scripts share the same batch interface, so anything you can
+do for one basin you can do for many:
+
+| Flag | Applies to | Purpose |
+|------|------------|---------|
+| `--all` | `etg_baseline_fill`, `diagnostics`, `etunit_summary`, `flag_irrigated`, `prep_basin` | Process every basin with a `config.toml` |
+| `--only KEY [KEY ...]` | `etg_baseline_fill`, `diagnostics`, `etunit_summary`, `flag_irrigated` | Process just these basins |
+| `--skip KEY [KEY ...]` | same, with `--all` | Leave these basins out |
+| `--list` | same, plus `prep_basin`, `run_all` | List basins and exit |
+| `--stop-on-error` | `etg_baseline_fill`, `diagnostics`, `etunit_summary` | Abort the batch on the first failure (default: continue) |
+
+Script-specific flags:
+
+| Flag | Script | Purpose |
+|------|--------|---------|
+| `--force` | `prep_basin`, `prep_custom_basin` | Re-clip `BpS.tif` even if it exists |
+| `--only-missing` | `prep_basin --all` | Skip basins that already have `BpS.tif` |
+| `--buffer-m` | `prep_statewide` (10000), `prep_custom_basin` (5000) | Clip buffer in metres |
+| `--prep-only`, `--skip-prep`, `--skip-diag`, `--skip-summary` | `run_all` | Run part of the four-step pipeline |
+| `--dry-run` | `run_all`, `prep_humboldt` | Show what would happen, write nothing |
+| `--ratio`, `--min-excess`, `--pctl`, `--reset`, `--mirror-to` | `flag_irrigated` | Override `[flag]` thresholds; see below |
+
 ### 6. Custom study areas (non-NWI)
 
 For basins outside the Nevada NWI framework (e.g. Sierra Valley CA, or basins in
@@ -248,9 +295,14 @@ ETg raster and treatment shapefile into `source/`, then run the fill. If your
 boundary uses a geographic CRS (e.g. EPSG:4326), the script auto-detects the
 appropriate UTM zone from the centroid.
 
-If your ET-unit / treatment shapefile already covers the whole study area, you
+If your ET-unit / treatment shapefile covers the whole study area, you
 don't need a separate boundary - pass it as `--treatment` and the fill derives the
-training boundary from its extent:
+training boundary from its extent. Check first: this only works when the ET units
+tile the basin. If the shapefile covers just the phreatophyte and irrigated
+areas, the derived boundary is much smaller than the basin, most of it is inside
+the buffered treatment zones, and very little is left to train on. The fill warns
+when the derived boundary covers less than 25% of the valid ETg extent; if you
+see that warning, supply `--boundary` instead.
 
 ```bash
 python prep_custom_basin.py SierraValley \
@@ -298,7 +350,8 @@ python flag_irrigated.py --all
 ```
 
 The script writes a copy of the treatment shapefile,
-`<treatment>_autoflag.shp`, that keeps every original attribute and adds:
+`<treatment>_autoflag.shp`, into `basins/<basin_key>/source/` (next to the
+original, not in `output/`). It keeps every original attribute and adds:
 
 | Attribute | Meaning |
 |-----------|---------|
@@ -341,8 +394,9 @@ attr_replace = "autoflag"
 ```
 
 Alternatively, run `flag_irrigated.py ... --mirror-to rplc_rt` to copy the flag
-into the standard `rplc_rt` trigger column so the fill treats the flagged
-polygons with no config change.
+into the standard `rplc_rt` trigger column, which saves you the `attr_replace`
+line. You still need the `treatment_shp` line either way: the script writes a
+copy and never modifies your original shapefile.
 
 
 ## Tests
@@ -368,8 +422,14 @@ The geospatial tests skip automatically if the runtime stack
 
 ## Outputs
 
-All output is written to `basins/<basin_key>/output/`. File names are prefixed with
-the basin key (e.g., `053_PineValley_ETg_final.tif`).
+All output is written to `basins/<basin_key>/output/`. Final products are
+prefixed with the basin key (e.g. `053_PineValley_ETg_final.tif`); the three
+intermediate rasters (`treatment_zone.tif`, `feather_weight.tif`,
+`BpS_matched.tif`) are not, because they are per-basin scratch layers.
+
+One output does not land in `output/`: `flag_irrigated.py` writes
+`<treatment>_autoflag.shp` next to the treatment shapefile, in
+`basins/<basin_key>/source/`. Its two report CSVs do go to `output/`.
 
 ### Rasters (GeoTIFF, DEFLATE-compressed, float32)
 
@@ -420,8 +480,9 @@ This section summarizes `etg_baseline_fill.py`.
 3. **Align BpS to the ETg grid** via nearest-neighbor resampling (categorical data).
 4. **Build the basin boundary mask.** The training boundary is resolved in order:
    `boundary_shp` from the config, then the matching NWI polygon, then the dissolved
-   extent of the treatment shapefile (the ET units tile the basin, so the file
-   defines it). This constrains training pixels to within the basin.
+   extent of the treatment shapefile. This constrains training pixels to within the
+   basin. The last option assumes the ET units tile the basin; when they don't, the
+   run warns that the derived boundary covers only a small share of the ETg extent.
 5. **Assemble training data and per-BpS means.** Training pixels are those outside
    treatment zones, within the basin, with a valid BpS class and ETg > 0. The mean
    ETg of each BpS class is recorded (with within-class standard deviation and
@@ -464,6 +525,16 @@ basin-wide value per class.
 
 Basins with fewer than 50 valid training pixels (after excluding treatment zones and
 out-of-basin areas) are automatically skipped, with a `_SKIPPED.txt` marker.
+
+### Training boundary on custom basins
+
+For a custom basin with no `boundary_shp`, the training boundary comes from the
+treatment shapefile. That is only equivalent to a basin outline when the ET units
+tile the basin. Running Pine Valley both ways makes the difference concrete: via
+the NWI polygon the model trains on 165,811 pixels and the treatment-zone volume
+change is -43.4%; via the treatment shapefile alone (which covers about 2% of the
+basin) it trains on 13,688 pixels and reports -31.7%. Watch the `valid training
+pixels` line and the boundary-coverage warning in the log.
 
 
 ## References

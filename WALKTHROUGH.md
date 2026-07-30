@@ -5,6 +5,13 @@ basin, then scaling up. If you used the original `bmm-etg-raster-fill`, the main
 change is that there is no DEM, no terrain/soil covariates, and no machine-learning
 step: the only covariate you prepare is BpS.
 
+> **Running this for the first time?** Use
+> [COOKBOOK_PineValley.md](COOKBOOK_PineValley.md) instead. It is this same
+> workflow on Pine Valley with the actual console output beside every command,
+> a checkpoint after each step, the numbers a correct run produces, and a
+> troubleshooting table. Come back here for the general case once Pine Valley
+> reproduces.
+
 
 ## 1. Set up the environment
 
@@ -15,6 +22,18 @@ conda activate bmm-etg-raster-fill
 
 You need one input dataset to get started: the CONUS LANDFIRE BpS raster
 (`LF2020_BPS_CONUS.tif`), downloadable from https://landfire.gov.
+
+Check that the `gdal` Python bindings came through, because `rasterio` alone
+does not provide them and they are what read the LANDFIRE class names:
+
+```bash
+python -c "from osgeo import gdal; print(gdal.__version__)"
+```
+
+If that fails, run `conda install -c conda-forge gdal`. Only two things need
+it: building `bps_lookup.json` in step 2, and embedding the colour table in
+each basin's `BpS.tif`. Build the lookup without gdal and every class comes out
+as `BpS 1073` with a grey palette, and everything downstream inherits that.
 
 
 ## 2. Run statewide BpS prep (one time only)
@@ -64,9 +83,18 @@ Drop two files into `basins/053_PineValley/source/`:
   grid.
 - Your treatment shapefile with `scale_fctr` and/or `rplc_rt` attribute columns.
 
-Then re-run `python prep_basin.py 053_PineValley`. It preserves the existing
-`config.toml` and just fills in the detected filenames if they were placeholders.
-(Or edit `config.toml` by hand -- see next step.)
+Then re-run `python prep_basin.py 053_PineValley`. It fills in the two
+`# PLACE ...` placeholders with the filenames it detects, and changes nothing
+else -- any value you have already set stays as you left it. The log tells you
+which fields it filled:
+
+```
+config.toml already exists - filled in etg_tif, treatment_shp
+  (your other edits are untouched)
+```
+
+If it detects the wrong file (several rasters in `source/`, say), edit
+`config.toml` by hand -- see the next step.
 
 
 ## 6. Review and edit config.toml
@@ -100,7 +128,10 @@ python etg_baseline_fill.py 053_PineValley
 
 Watch the log. Key things to confirm:
 
-- `valid training pixels` is comfortably above the 50-pixel minimum.
+- `valid training pixels` is comfortably above the 50-pixel minimum. For a
+  basin the size of Pine Valley, expect six figures; a few thousand means the
+  training boundary is wrong.
+- No boundary-coverage warning in step 4 (custom basins only).
 - `BpS classes in training data` looks reasonable for the basin.
 - The per-class mean table lists sensible ETg values per vegetation type.
 - `Treatment-zone ETg volume change` is negative (the fill removed
@@ -118,8 +149,10 @@ python diagnostics.py 053_PineValley
 python etunit_summary.py 053_PineValley
 ```
 
-`diagnostics.py` writes eight PNGs (histograms, scatter, BpS box-plots, map panels,
-difference and percent-change maps, feather weight). `etunit_summary.py` writes
+`diagnostics.py` writes seven PNGs (histogram, scatter, BpS box-plots, map panels,
+difference map, treatment-zone map, feather weight). The eighth figure in
+`output/`, `053_PineValley_diag_pct_change_map.png`, was already written by the
+fill. `etunit_summary.py` writes
 `053_PineValley_ETUNIT_SUMMARY.csv` with area, ETg volume, and rate (with
 mean +/- 1 SD uncertainty bounds) per ET unit.
 
@@ -171,7 +204,8 @@ python flag_irrigated.py 053_PineValley
 ```
 
 It compares each polygon's mean ETg to the natural baseline of its BpS class and
-writes `<treatment>_autoflag.shp` (plus a `..._autoflag_report.csv`) with an
+writes `<treatment>_autoflag.shp` into `source/`, next to the original shapefile
+(the `..._autoflag_report.csv` goes to `output/`), with an
 `autoflag` column (1 = looks irrigation-influenced) and per-polygon diagnostics
 (`etg_mean`, `bps_base`, `etg_ratio`, `etg_excs`, dominant BpS class).
 
@@ -195,7 +229,9 @@ attr_replace = "autoflag"
 ```
 
 or run `flag_irrigated.py ... --mirror-to rplc_rt` to copy the decision into the
-standard `rplc_rt` trigger column instead. Then run the fill as usual.
+standard `rplc_rt` trigger column, which saves you the `attr_replace` line. The
+`treatment_shp` line is needed either way, because the script writes a copy and
+leaves your original shapefile untouched. Then run the fill as usual.
 
 
 ## Running multiple basins
@@ -232,8 +268,10 @@ For an area that isn't an NWI basin, use `prep_custom_basin.py`.
 
 ### Prep the basin
 
-If your ET-unit / treatment shapefile already covers the study area (the usual
-case), let it define the area - no separate boundary needed:
+If your ET-unit / treatment shapefile tiles the study area, let it define the
+area - no separate boundary needed. Confirm that it really does tile the basin
+rather than covering only the phreatophyte and irrigated ground; if it is the
+latter, the fill has almost nothing left to train on and will say so:
 
 ```bash
 python prep_custom_basin.py SierraValley \
@@ -270,15 +308,18 @@ python etunit_summary.py SierraValley
 ### Key differences from NWI basins
 
 - The training mask comes from your `boundary_shp` if set, otherwise the
-  treatment shapefile's extent - not the NWI shapefile.
+  treatment shapefile's extent - not the NWI shapefile. The fill warns when
+  that derived boundary covers less than 25% of the valid ETg extent; if you
+  see the warning, re-prep with `--boundary` or set `boundary_shp` by hand.
 - BpS is clipped from the CONUS source you pass, not from `statewide/`.
 - Everything downstream is identical to an NWI basin.
 
 
 ## BpS symbology in QGIS
 
-`prep_basin.py` and `prep_custom_basin.py` embed a color table and raster attribute
-table in `input/BpS.tif` and write `BpS.clr` / `BpS.qml` sidecars, so the BpS raster
-opens in QGIS or ArcGIS with the original LANDFIRE class names and colours. If the
-colours don't load automatically, apply the `.qml` style manually
-(Layer Properties > Symbology > Load Style).
+`prep_basin.py` and `prep_custom_basin.py` always write `BpS.clr` / `BpS.qml`
+sidecars, and additionally embed a color table and raster attribute table inside
+`input/BpS.tif` when the `gdal` Python bindings are installed (see step 1). With
+the embed, the BpS raster opens in QGIS or ArcGIS already carrying the LANDFIRE
+class names and colours; without it, apply the `.qml` style manually
+(Layer Properties > Symbology > Load Style). The prep log says which happened.

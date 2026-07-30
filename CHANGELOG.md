@@ -2,6 +2,85 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.1] - 2026-07-29
+
+Packaging and documentation fixes found while re-running the Pine Valley
+workflow from a clean checkout.  No change to the science: the fill reproduces
+the 1.0.0 outputs exactly.
+
+### Fixed
+
+- **`basins/_template/config.toml` was not tracked in git.**  `.gitignore`
+  excluded all of `basins/`, so a fresh clone had no config template and every
+  prep script exited with "config template not found".  Nine of the ten tests
+  failed for the same reason.  `.gitignore` now uses `basins/*` with a negation
+  for `basins/_template/`.
+- **`statewide/bps_lookup.json` is now tracked** (180 KB of LANDFIRE class
+  names and colours), so a new clone gets readable class names without
+  rebuilding the statewide clip.
+- **`gdal` added to `environment.yml`.**  `bps_utils.py` reads the LANDFIRE
+  raster attribute table through `osgeo.gdal`, which conda-forge `rasterio`
+  does not provide.  Without it `prep_statewide.py` silently produced a lookup
+  with no class names (`BpS 1073`) and a grey palette, and the color table and
+  RAT were never embedded in `BpS.tif`.  The prep log now names the reason
+  instead of "non-integer dtype or GDAL missing".
+- **`prep_basin.py` / `prep_custom_basin.py` now back-fill `# PLACE ...`
+  placeholders** in an existing `config.toml`, which is what WALKTHROUGH.md
+  step 5 always claimed.  Only unfilled placeholders are touched; every other
+  value stays as the user left it.  The shared helper is
+  `basin_config.backfill_source_files`.
+- **`diagnostics.py` printed filenames that don't exist**, reporting
+  `diag_histogram.png` while writing `{basin_key}_diag_histogram.png`.
+- **Divide-by-zero warning** on every run from `_spatially_weighted_bps_mean`;
+  the fallback branch is now selected with `np.divide(..., where=)`.
+
+### Added
+
+- The fill warns when a treatment-derived training boundary covers less than
+  25% of the valid ETg extent.  ET-unit shapefiles that cover only the
+  phreatophyte and irrigated ground leave very few training pixels, and the
+  result differed by 12 percentage points on Pine Valley with no indication in
+  the log.
+- `tests/test_repo_files.py`, guarding that the two required files inside the
+  ignored data folders exist and are not gitignored.
+- `prep_statewide.py` and `prep_humboldt.py` added to the smoke test's
+  no-machine-learning-imports scan.
+- A batch-and-utility flag reference in README.md.  The `--all / --only /
+  --skip / --list / --stop-on-error` interface on the four per-basin scripts
+  was implemented but undocumented.
+- `COOKBOOK_PineValley.md`, a worked end-to-end example on basin 053.  Every
+  command is shown with its verified console output, a "you should now have"
+  checkpoint, and the reference numbers a correct run produces (165,811
+  training pixels, -43.40% treatment-zone volume change, 45,172 ac /
+  27,331 ac-ft), plus a troubleshooting table.  README.md and WALKTHROUGH.md
+  point new users at it.
+
+### Changed
+
+- `prep_humboldt.py` renders a missing `config.toml` from the shared template
+  instead of a five-line stub, and its docstring now states that it does
+  overwrite the two `[source]` filenames (that is its job) rather than
+  implying `prep_basin.py` completes the file later.
+- Removed the `[flag] trigger_attr` key.  It was read into
+  `basin_config.FLAG_TRIGGER_ATTR` and never used; `flag_irrigated.py`
+  hardcodes `autoflag`.
+
+### Documentation
+
+- README.md: corrected the claim that all output filenames carry the basin-key
+  prefix (three intermediate rasters do not), noted that
+  `<treatment>_autoflag.shp` is written to `source/` rather than `output/`,
+  added `tests/`, `Sample_Commands.txt`, and `ETg_fill_methodology.docx` to the
+  repository structure, and added a "Training boundary on custom basins"
+  caveat.
+- WALKTHROUGH.md: `diagnostics.py` writes seven PNGs, not eight (the
+  percent-change map comes from the fill), plus a `gdal` check in step 1 and
+  the boundary-coverage caveat.
+- `diagnostics.py` and `etunit_summary.py` docstrings showed a usage example
+  with no basin key, which exits with a usage error.
+- Sample_Commands.txt now covers `flag_irrigated.py`, the setup check, the
+  placeholder back-fill step, and the batch flags.
+
 ## [1.0.0] - 2026-06-01
 
 Streamlined, BpS-only release.  This repository is a simplified fork of

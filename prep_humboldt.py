@@ -19,8 +19,8 @@ For each HA present in the Humboldt master shapefile:
   4. Write to  basins/<KEY>/source/<KEY>_treatment_Huntington2022.shp
 
 Also drops a PROVENANCE.txt in each basin's source/ folder citing the report,
-and patches any existing basin config.toml [source] section to point at the
-new filenames (creating config.toml if missing via the existing template).
+and points each basin config.toml [source] section at the new filenames
+(rendering a full config.toml from basins/_template/config.toml if missing).
 
 Usage
 -----
@@ -61,7 +61,6 @@ RASTER_DIR    = HUMBOLDT_DIR / "RASTERS"
 SHAPE_FILE    = HUMBOLDT_DIR / "SHAPEFILE" / "Humboldt_ALL_INSIDE_DISS.shp"
 NWI_SHP       = HERE / "NWI_Investigations_EPSG_32611.shp"
 BASINS_DIR    = HERE / "basins"
-TEMPLATE_TOML = BASINS_DIR / "_template" / "config.toml"
 
 # Conversion constant: 1 foot = 304.8 mm
 MM_PER_FT = 304.8
@@ -192,11 +191,15 @@ def subset_treatment_shp(ha3: str, dst_base: Path) -> int:
 
 
 def patch_config_toml(config_path: Path, etg_name: str, treat_name: str) -> None:
-    """Update [source] etg_tif and treatment_shp in an existing config.toml.
+    """Point [source] etg_tif and treatment_shp at the files this script staged.
 
-    If config.toml doesn't exist, a minimal one is rendered from the template
-    with just these two fields filled in; prep_basin.py can overwrite the
-    [inputs] section later.
+    Unlike prep_basin.py, this DOES overwrite those two values in an existing
+    config.toml: the whole job of this script is to stage a known dataset, so
+    the filenames it just wrote are the correct ones.  Every other line of the
+    config, including your parameter edits, is left alone.
+
+    If config.toml doesn't exist, a full one is rendered from
+    basins/_template/config.toml with the two filenames filled in.
     """
     if config_path.exists():
         text = config_path.read_text(encoding="utf-8")
@@ -205,16 +208,21 @@ def patch_config_toml(config_path: Path, etg_name: str, treat_name: str) -> None
         config_path.write_text(text, encoding="utf-8")
         return
 
-    # No config.toml yet — write a minimal one; prep_basin.py will complete it.
+    # No config.toml yet - render a complete one from the shared template.
+    import basin_config as _bc
     basin_key = config_path.parent.name
-    stub = (
-        f"[basin]\n"
-        f"basin_key = \"{basin_key}\"\n\n"
-        f"[source]\n"
-        f"etg_tif       = \"{etg_name}\"\n"
-        f"treatment_shp = \"{treat_name}\"\n"
+    basin_id = basin_key.split("_", 1)[0] if "_" in basin_key else ""
+    config_path.write_text(
+        _bc.render_config_template({
+            "basin_key":         basin_key,
+            "basin_id":          basin_id,
+            "basin_name":        basin_key,
+            "etg_tif":           etg_name,
+            "treatment_shp":     treat_name,
+            "boundary_shp_line": '# boundary_shp = "boundary.shp"',
+        }),
+        encoding="utf-8",
     )
-    config_path.write_text(stub, encoding="utf-8")
 
 
 _FIELD_RE = {

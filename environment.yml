@@ -12,6 +12,9 @@ dependencies:
   - shapely
   - pyproj
   - matplotlib
+  - gdal              # osgeo Python bindings: reads the LANDFIRE BpS attribute
+                      # table (class names + colours).  Without it the class
+                      # names in logs and symbology fall back to "BpS <code>".
   - pytest            # test runner (for tests/; optional at runtime)
   - pip:
     - tomli           # TOML reader (only needed if Python < 3.11)
