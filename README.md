@@ -439,6 +439,7 @@ One output does not land in `output/`: `flag_irrigated.py` writes
 | `{key}_ETg_pct_change.tif` | Per-pixel percent change (raw to final) |
 | `treatment_zone.tif` | Binary mask: 1 = treatment polygon (buffered), 0 = outside |
 | `feather_weight.tif` | Gaussian blend weight (1 = baseline, 0 = raw ETg) |
+| `{key}_rates_adjust.shp` | (In `source/`, not `output/`.) Per-polygon rates plus an editable `adj_fctr` column; the tuning surface. Edits round-trip on the next run |
 | `BpS_matched.tif` | BpS reprojected to the ETg grid |
 
 ### Tables (CSV)

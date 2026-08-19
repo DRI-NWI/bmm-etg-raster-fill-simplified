@@ -228,7 +228,7 @@ later, at step 1:
 [17:52:57]     polygons:  100 treatment  |  52 untouched
 [17:52:57]     buffering treatment polygons by 90.0 CRS-units
 [17:52:57]    2b . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
-[17:52:57]         To tune single polygons, add a numeric 'adj_fctr' column to the treatment shapefile (0 = no override, 0.8 = cut that polygon's baseline 20%), or run flag_irrigated.py, which seeds it into its _autoflag copy.
+[17:52:57]         To tune single polygons, edit the 'adj_fctr' column in 053_PineValley_rates_adjust.shp (written to the treatment shapefile's folder at the end of this run; 0 = no override, 0.8 = cut that polygon's baseline 20%) and re-run.
 [17:52:57]   -> wrote treatment_zone.tif  (970x2853)
 [17:52:57]     treatment-zone pixels: 49,592
 [17:52:57]    2d . Building training ETg (NaN-ing all treatment pixels) ...
@@ -487,19 +487,41 @@ Re-run the fill. That is the entire procedure.
 
 ### Option B: adjust individual polygons
 
-Open the shapefile named above in QGIS, add a numeric field called `adj_fctr`,
-and set it per feature. The scripts never write to your shapefile, but you are
-free to add columns to it, and this is the normal way to do it.
+Every fill run writes `053_PineValley_rates_adjust.shp` into `source/`, next
+to your treatment shapefile. It is the tuning surface: one polygon per feature,
+this run's rates already attached, and an editable `adj_fctr` column already
+there. No field creation, no edits to your master shapefile.
+
+| Column | Meaning |
+|---|---|
+| `row_i`, `poly_id` | which polygon (matches `polygon_id` in the summary CSV) |
+| `treated` | 1 = replaced by the fill, 0 = left as raw ETg |
+| `etg_input`, `etg_base`, `etg_final` | this run's mean rates (ft/yr) |
+| `lgcy_rt` | the analyst's legacy `rplc_rt`, for comparison |
+| `adj_fctr` | **the column you edit** |
+
+Open it in QGIS, style it by `etg_base` or `lgcy_rt`, and type overrides into
+`adj_fctr`:
 
 | `adj_fctr` | Effect on that polygon |
 |---|---|
-| `0`, or blank, or no column at all | no override; the basin-wide `baseline_adjust` applies |
+| `0` (the seeded value) | no override; the basin-wide `baseline_adjust` applies |
 | `0.8` | cut that polygon's rate by 20% |
 | `1.5` | raise it 50%, subject to the cap below |
 
-Save the edits, re-run the fill. A per-polygon value beats `baseline_adjust`.
-Rename the column with `[adjustment] attr_adjust` if you prefer a different
-name.
+Save, re-run the fill. Your edits round-trip: the next run reads `adj_fctr`
+back from this file, applies it, and rewrites the file with refreshed rates
+and your overrides intact. A per-polygon value beats `baseline_adjust`.
+
+Two rules keep this unambiguous. If your treatment shapefile carries its own
+`adj_fctr` column with values, that wins and the rates file is ignored as an
+input (the log says so). And the rates file deliberately has no
+`scale_fctr` / `rplc_rt` columns, so pointing `treatment_shp` at it by mistake
+fails with a clear error instead of silently treating the wrong polygons.
+It cannot change which polygons are treated, only their rates.
+
+The old route still works too: add `adj_fctr` to the treatment shapefile
+itself (rename via `[adjustment] attr_adjust`).
 
 ### Confirming it took
 
@@ -610,10 +632,10 @@ leaving your original untouched. Two things follow from that:
   `..._autoflag_autoflag.shp` and the sticky-override logic looks in the wrong
   place. Switch `treatment_shp` to the copy only when you run the fill.
 
-As a convenience, the copy is also seeded with an empty `adj_fctr` and a
-`UniqueID` column if your source lacks them, so the tuning knob from the
-previous section is already there to edit. That is the only reason those
-columns show up in the copy; the knob itself is not tied to this workflow.
+The copy is also seeded with a `UniqueID` column if your source lacks one, so
+summary rows trace back to features. Rate tuning is not done here: that
+happens in `053_PineValley_rates_adjust.shp` (Option B above), regardless of
+whether you use the auto-flagger.
 
 ```bash
 python flag_irrigated.py 053_PineValley

@@ -174,11 +174,17 @@ If a polygon's baseline needs tuning, use the expert adjustment knob.
 
 The baseline can be scaled up or down based on professional judgment.
 
-### Option A: adjust a single polygon via the shapefile
+### Option A: adjust single polygons via the rates file
 
-Add (or edit) an `adj_fctr` column in your treatment shapefile. For any polygon,
-a value > 0 multiplies that polygon's baseline (e.g. `0.8` reduces it 20%). Re-run
-the fill. Per-polygon values take precedence over the basin-wide default.
+Every fill run writes `{basin_key}_rates_adjust.shp` next to the treatment
+shapefile. It carries each polygon's input / baseline / final rates and a
+pre-seeded, editable `adj_fctr` column. Open it in QGIS, set `adj_fctr` on the
+polygons you want to change (a value > 0 multiplies that polygon's baseline,
+e.g. `0.8` reduces it 20%), and re-run the fill. Edits round-trip: the next
+run reads them back and rewrites the file with refreshed rates and your
+overrides intact. Per-polygon values take precedence over the basin-wide
+default. (Adding an `adj_fctr` column to the treatment shapefile itself still
+works and wins over the rates file.)
 
 ### Option B: adjust the whole basin via config.toml
 

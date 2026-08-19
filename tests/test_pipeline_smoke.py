@@ -211,6 +211,81 @@ def test_boundary_derived_from_treatment(tmp_path_factory):
         "fill did not build a training boundary from the treatment shapefile"
 
 
+def test_rates_adjust_roundtrip(tmp_path_factory):
+    """The fill writes {key}_rates_adjust.shp next to the treatment shapefile;
+    an adj_fctr edited there must be applied on the next run, reported in the
+    polygon summary, and carried forward into the regenerated file."""
+    import csv as _csv
+
+    work = tmp_path_factory.mktemp("ratesadj")
+    for f in CODE_FILES:
+        shutil.copy2(PROJECT_ROOT / f, work / f)
+    for ext in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
+        src = PROJECT_ROOT / f"{NWI_STEM}{ext}"
+        if src.exists():
+            shutil.copy2(src, work / src.name)
+    (work / "basins" / "_template").mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "basins" / "_template" / "config.toml",
+                 work / "basins" / "_template" / "config.toml")
+
+    data = synth_data.generate(work / "_synth")
+    key = "RatesAdj"
+    source = work / "basins" / key / "source"
+    source.mkdir(parents=True)
+    shutil.copy2(data["etg"], source / "RatesAdj_ETg.tif")
+    # The synthetic shapefile carries an adj_fctr column (used by other tests
+    # to exercise the shapefile-precedence path).  Drop it here: this test is
+    # about tuning through the rates_adjust file, which is only consulted when
+    # the treatment shapefile has no adj_fctr overrides of its own.
+    g_t = gpd.read_file(data["treatment"]).drop(columns=["adj_fctr"],
+                                                errors="ignore")
+    g_t.to_file(source / "treatment.shp")
+
+    _run("prep_custom_basin.py", key, "--boundary", str(data["boundary"]),
+         "--bps", str(data["bps"]), cwd=work)
+
+    # Run 1: creates the rates file with adj_fctr seeded to 0.
+    _run("etg_baseline_fill.py", key, cwd=work)
+    rates_shp = source / f"{key}_rates_adjust.shp"
+    assert rates_shp.exists(), "fill did not write the rates_adjust shapefile"
+    g = gpd.read_file(rates_shp)
+    for col in ("row_i", "treated", "etg_input", "etg_base", "etg_final",
+                "adj_fctr"):
+        assert col in g.columns, f"rates_adjust missing column {col}"
+    assert (g["adj_fctr"] == 0).all(), "adj_fctr should be seeded to 0"
+
+    def _summary():
+        path = work / "basins" / key / "output" / f"{key}_polygon_summary.csv"
+        return {r["polygon_id"]: r for r in _csv.DictReader(open(path))}
+
+    before = _summary()
+    treated = g[g["treated"] == 1]
+    assert len(treated) > 0, "synthetic basin has no treated polygons"
+    target = int(treated["row_i"].iloc[0])
+    # polygon_summary.csv is keyed by polygon_id; the rates file carries the
+    # same value in its poly_id column, so join through that.
+    pid = {int(r): str(pd_) for r, pd_ in zip(g["row_i"], g["poly_id"])}
+
+    # Analyst edit: halve the target polygon's rate; original shp untouched.
+    g.loc[g["row_i"] == target, "adj_fctr"] = 0.5
+    g.to_file(rates_shp)
+
+    # Run 2: the override must round-trip.
+    _run("etg_baseline_fill.py", key, cwd=work)
+    after = _summary()
+    tkey = pid[target]
+    assert after[tkey]["adj_factor"] == "0.5", \
+        f"adj_factor not reported (got {after[tkey]['adj_factor']!r})"
+    assert float(after[tkey]["mean_final_ETg"]) < \
+        float(before[tkey]["mean_final_ETg"]), "override did not reduce the rate"
+    # Untouched treated polygons must not move.
+    for r in treated["row_i"].astype(int).tolist()[1:]:
+        assert after[pid[r]]["mean_final_ETg"] == before[pid[r]]["mean_final_ETg"]
+    # Regenerated file preserves the edit and refreshes the rates.
+    g2 = gpd.read_file(rates_shp)
+    assert float(g2.loc[g2["row_i"] == target, "adj_fctr"].iloc[0]) == 0.5
+
+
 def test_no_ml_dependencies_in_source():
     """The shipped pipeline must not import scikit-learn / lightgbm / whitebox."""
     banned = ("import lightgbm", "import sklearn", "from sklearn",

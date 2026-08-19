@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.5] - 2026-08-19
+
+### Added
+
+- **`{key}_rates_adjust.shp`**, written next to the treatment shapefile at the
+  end of every fill run: a lean copy of the treatment polygons carrying that
+  run's per-polygon input / baseline / final rates, the legacy `rplc_rt`, and
+  a pre-seeded editable `adj_fctr` column.  Analysts tune rates by typing
+  overrides into that column in QGIS and re-running - no field creation, and
+  the original treatment shapefile is never touched.  Edits round-trip: the
+  next run reads `adj_fctr` back from the file (step 2b logs it), applies it,
+  and rewrites the file with refreshed rates and the overrides intact.
+  An `adj_fctr` column in the treatment shapefile itself still wins, and the
+  rates file deliberately omits the `scale_fctr` / `rplc_rt` trigger columns
+  so pointing `treatment_shp` at it fails loudly rather than silently.
+  Covered by a round-trip test (`test_rates_adjust_roundtrip`).
+
+### Fixed
+
+- `adj_factor` in `{key}_polygon_summary.csv` now reports overrides read from
+  the rates file (it previously only saw a column in the original shapefile).
+
+### Changed
+
+- `flag_irrigated.py` no longer seeds `adj_fctr` into its `_autoflag` copy;
+  the rates file is the single tuning surface.  It still seeds `UniqueID`.
+
 ## [1.0.4] - 2026-08-19
 
 ### Removed

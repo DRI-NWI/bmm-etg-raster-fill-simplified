@@ -383,6 +383,49 @@ def main(study_area: str | None = None) -> None:
     attr_adjust  = getattr(cfg, "ATTR_ADJUST", "adj_fctr")
     adjust_raster = np.full(grid_shape, basin_adjust, dtype=np.float32)
 
+    # Per-polygon overrides can come from two places, in order of precedence:
+    #   1. an ``adj_fctr`` column in the treatment shapefile itself;
+    #   2. the ``{key}_rates_adjust.shp`` review file that this script writes
+    #      next to the treatment shapefile at the end of every run.  Analysts
+    #      edit adj_fctr there (the column is pre-seeded, no field creation
+    #      needed) and simply re-run; edits round-trip automatically.
+    rates_shp = Path(cfg.TREATMENT_SHP).parent / \
+        f"{cfg.STUDY_AREA_NAME}_rates_adjust.shp"
+    _adj_src = None
+    if (attr_adjust and attr_adjust in gdf.columns
+            and gdf[attr_adjust].fillna(0).astype(float).gt(0).any()):
+        _adj_src = f"treatment shapefile column '{attr_adjust}'"
+        if rates_shp.exists():
+            _log(f"   2b . Note: '{attr_adjust}' in the treatment shapefile takes "
+                 f"precedence; {rates_shp.name} is ignored as an input this run")
+    elif rates_shp.exists():
+        try:
+            gdf_rates = gpd.read_file(rates_shp)
+            ok = ("row_i" in gdf_rates.columns
+                  and attr_adjust in gdf_rates.columns
+                  and len(gdf_rates) > 0
+                  and int(gdf_rates["row_i"].max()) < len(gdf))
+            if not ok:
+                _log(f"   2b . WARNING: {rates_shp.name} does not match the "
+                     f"treatment shapefile (row_i/{attr_adjust} missing or out of "
+                     f"range) - ignoring it. Delete it to silence this warning.")
+            else:
+                vals = gdf_rates[attr_adjust].fillna(0).astype(float)
+                picked = {int(r): float(v)
+                          for r, v in zip(gdf_rates["row_i"].astype(int), vals)
+                          if v > 0}
+                if picked:
+                    if attr_adjust not in gdf.columns:
+                        gdf[attr_adjust] = 0.0
+                    for r, v in picked.items():
+                        gdf.loc[r, attr_adjust] = v
+                    _adj_src = rates_shp.name
+                    _log(f"   2b . Read {len(picked)} '{attr_adjust}' override(s) "
+                         f"from {rates_shp.name}")
+        except Exception as e:
+            _log(f"   2b . WARNING: could not read {rates_shp.name} ({e}) - "
+                 f"ignoring it")
+
     has_per_poly_adj = (
         attr_adjust
         and attr_adjust in gdf.columns
@@ -414,10 +457,10 @@ def main(study_area: str | None = None) -> None:
         if attr_adjust and attr_adjust not in gdf.columns:
             _log(f"   2b . Per-polygon adjustment column '{attr_adjust}' not found "
                  f"in shapefile - using basin-wide default ({basin_adjust})")
-            _log(f"        To tune single polygons, add a numeric '{attr_adjust}' "
-                 f"column to the treatment shapefile (0 = no override, 0.8 = "
-                 f"cut that polygon's baseline 20%), or run flag_irrigated.py, "
-                 f"which seeds it into its _autoflag copy.")
+            _log(f"        To tune single polygons, edit the '{attr_adjust}' "
+                 f"column in {rates_shp.name} (written to the treatment "
+                 f"shapefile's folder at the end of this run; 0 = no override, "
+                 f"0.8 = cut that polygon's baseline 20%) and re-run.")
         else:
             _log(f"   2b . No per-polygon adjustment overrides - "
                  f"using basin-wide default ({basin_adjust})")
@@ -909,6 +952,7 @@ def main(study_area: str | None = None) -> None:
     legacy_col = "rplc_rt" if "rplc_rt" in gdf_orig.columns else None
 
     rows = []
+    shp_rows = []   # parallel records for the rates_adjust review shapefile
     for i, row in gdf_orig.iterrows():
         geom = row.geometry
         if geom is None or not geom.is_valid:
@@ -940,9 +984,13 @@ def main(study_area: str | None = None) -> None:
         mean_final = float(np.mean(final_vals))  if len(final_vals) > 0  else np.nan
         mean_input = float(np.mean(input_vals))  if len(input_vals) > 0  else np.nan
 
+        # Consult gdf, not gdf_orig: overrides read from the rates_adjust
+        # file are injected into gdf and never exist in the original file.
         poly_adj = basin_adjust
-        if is_treated and has_per_poly_adj and attr_adjust in gdf_orig.columns:
-            poly_adj_val = float(row.get(attr_adjust, 0) or 0)
+        if is_treated and has_per_poly_adj and attr_adjust in gdf.columns \
+                and i < len(gdf):
+            v = gdf[attr_adjust].iloc[i]
+            poly_adj_val = float(v) if v == v and v is not None else 0.0
             if poly_adj_val > 0:
                 poly_adj = poly_adj_val
 
@@ -968,6 +1016,29 @@ def main(study_area: str | None = None) -> None:
                 rec[extra] = row[extra]
         rows.append(rec)
 
+        # Record for the review shapefile.  adj_fctr echoes the analyst's
+        # OVERRIDE (0 = none), not the effective factor, so a basin-wide
+        # baseline_adjust never gets frozen into per-polygon values.
+        override = 0.0
+        if attr_adjust and attr_adjust in gdf.columns and i < len(gdf):
+            v = gdf[attr_adjust].iloc[i]
+            override = float(v) if v == v and v is not None else 0.0  # NaN-safe
+        shp_rec = {
+            "row_i": int(i),
+            "poly_id": str(row[id_col])[:80],
+            "treated": 1 if is_treated else 0,
+            "etg_input": round(mean_input, 4),
+            "etg_base": round(mean_base, 4),
+            "etg_final": round(mean_final, 4),
+            "adj_fctr": round(override, 4),
+        }
+        if legacy_col is not None:
+            shp_rec["lgcy_rt"] = round(float(row.get(legacy_col, 0) or 0), 4)
+        if "ET_unit" in gdf_orig.columns:
+            shp_rec["et_unit"] = str(row["ET_unit"])[:40]
+        shp_rec["geometry"] = geom
+        shp_rows.append(shp_rec)
+
     csv_path = out_dir / f"{sa}_polygon_summary.csv"
     if rows:
         keys = rows[0].keys()
@@ -978,6 +1049,26 @@ def main(study_area: str | None = None) -> None:
         _log(f"  -> wrote {csv_path.name}  ({len(rows)} polygons)")
     else:
         _log("    WARNING: no polygons produced summary rows")
+
+    # -- 8b. Rates-review shapefile -------------------------------------------
+    # A lean copy of the treatment polygons carrying this run's per-polygon
+    # rates plus an editable adj_fctr column.  This is the tuning surface:
+    # open it in QGIS, type overrides into adj_fctr, re-run the fill.  Values
+    # round-trip (step 2b reads them back), and the trigger columns
+    # (scale_fctr / rplc_rt) are deliberately NOT copied so pointing
+    # treatment_shp at this file by mistake fails loudly instead of silently
+    # treating the wrong polygons.
+    if shp_rows:
+        try:
+            gdf_rates_out = gpd.GeoDataFrame(shp_rows, crs=gdf_orig.crs)
+            gdf_rates_out.to_file(rates_shp)
+            n_over = int((gdf_rates_out["adj_fctr"] > 0).sum())
+            _log(f"  -> wrote {rates_shp.name}  ({len(gdf_rates_out)} polygons, "
+                 f"{n_over} adj_fctr override(s) carried forward)")
+            _log(f"     To tune rates: edit 'adj_fctr' in that file in QGIS "
+                 f"(0 = no override, 0.8 = cut that polygon 20%), then re-run.")
+        except Exception as e:
+            _log(f"    WARNING: could not write {rates_shp.name}: {e}")
 
     # -- Summary stats -------------------------------------------------------
     _log("-- Summary -----------------------------------------")
