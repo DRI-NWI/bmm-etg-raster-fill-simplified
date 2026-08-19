@@ -22,8 +22,8 @@ treatment fall back to the global training mean.  Set
 ``spatial_weight_radius_px = 0`` in config.toml for a flat basin-wide class mean
 (one value per class).
 
-This replaces the previous two-stage approach (BpS class mean + a LightGBM /
-RandomForest terrain-residual model).  Cross-validation showed the terrain
+This replaces the previous two-stage approach (BpS class mean + a
+machine-learning terrain-residual model).  Cross-validation showed the terrain
 residual model never improved on the BpS-class baseline, so it was removed.
 
 Treatment handling
@@ -578,11 +578,10 @@ def main(study_area: str | None = None) -> None:
         _log(f"  -> wrote {skip_path.name}")
         return
 
+    # All valid pixels are used for training.  (The ML-era random-subsample cap
+    # is gone: per-class means and Gaussian smoothing are cheap, and the cap
+    # both discarded data and made large-basin results depend on an RNG seed.)
     idx = np.where(valid.ravel())[0]
-    if cfg.MAX_TRAIN_PIXELS and n_valid > cfg.MAX_TRAIN_PIXELS:
-        rng = np.random.default_rng(cfg.RANDOM_SEED)
-        idx = rng.choice(idx, size=cfg.MAX_TRAIN_PIXELS, replace=False)
-        _log(f"    sub-sampled to {len(idx):,} pixels")
 
     y_train  = etg_raw.ravel()[idx]
     bps_flat = bps.ravel()[idx].astype(np.int32)
@@ -821,8 +820,6 @@ def main(study_area: str | None = None) -> None:
         "[baseline]",
         f"method                   = {baseline_method}",
         f"spatial_weight_radius_px = {radius}",
-        f"max_train_pixels         = {cfg.MAX_TRAIN_PIXELS}",
-        f"random_seed              = {cfg.RANDOM_SEED}",
         "",
         "[crs_overrides]",
     ]

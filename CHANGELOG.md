@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.4] - 2026-08-19
+
+### Removed
+
+- **`[baseline] max_train_pixels` and `random_seed`** - the last functional
+  remnants of the ML era.  The random-subsample cap existed to bound
+  model-training cost; the simplified baseline is per-class
+  means plus Gaussian smoothing, whose cost depends on raster size, not on
+  training-pixel count.  Measured on Pine Valley: capping to 50k of 165,811
+  pixels saved no time (10.5 s vs 10.7 s) but changed the treatment-zone
+  volume change from -43.40% to -43.05%, cut rare classes to a handful of
+  pixels (pinyon-juniper to n=1), and made the answer seed-dependent
+  (seed 42: -43.05%; seed 7: -42.40%).  All valid pixels are now always used,
+  so results on basins large enough to have tripped the cap (>500k training
+  pixels) are deterministic and change slightly; basins under the cap,
+  including Pine Valley, are unchanged.  Old config.toml files that still
+  carry the two keys keep working - they are ignored.
+  (`random_seed` never affected anything unless the cap fired.)
+
 ## [1.0.3] - 2026-07-29
 
 Makes the review-and-tune loop usable.  No change to the modeled values: the

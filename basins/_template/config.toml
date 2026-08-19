@@ -48,8 +48,6 @@ attr_adjust     = "adj_fctr"        # optional per-polygon override column in th
 # pixels of that same class.  Set the radius to 0 for a flat basin-wide
 # class mean (one value per class).
 spatial_weight_radius_px = 33       # window radius in px (~1 km at 30 m); 0 = flat
-max_train_pixels         = 500000   # random-subsample cap for training
-random_seed              = 42
 
 [flag]
 # Settings for flag_irrigated.py - the optional pre-screening helper that flags

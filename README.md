@@ -7,8 +7,8 @@ absent, using the surrounding native vegetation as the reference.
 
 This is a streamlined version of the original `bmm-etg-raster-fill`. The original
 refined a per-vegetation-class baseline with a machine-learning terrain model
-(LightGBM / RandomForest on elevation, slope, water-table depth, and related
-covariates). Cross-validation showed that terrain model never improved on the
+built on elevation, slope, water-table depth, and related covariates.
+Cross-validation showed that terrain model never improved on the
 vegetation-class baseline, so it was removed along with all of its input data and
 dependencies. See [CHANGELOG.md](CHANGELOG.md) for details.
 
@@ -234,7 +234,6 @@ Each basin gets a `config.toml` with sensible defaults. Edit as needed:
 | `baseline_adjust` | `1.0` | Expert adjustment scalar (0.8 = reduce 20%) |
 | `attr_adjust` | `adj_fctr` | Per-polygon adjustment override column |
 | `spatial_weight_radius_px` | `33` | Gaussian window radius (px) for per-BpS mean; ~1 km at 30 m; 0 = flat class mean |
-| `max_train_pixels` | `500000` | Random-subsample cap for training |
 
 ### 5. Run
 

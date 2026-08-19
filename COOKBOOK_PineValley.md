@@ -449,12 +449,94 @@ the expected result, not a red flag. Sort by that column to find the polygons
 worth a second look.
 
 
-## Adjusting, scaling, and overriding
+## Adjusting and scaling the ETg rates
 
-Three levels, from "which polygons are touched" to "change the model". Work
-down the list: most disagreements are settled at level 1 or 2.
+One rule settles most confusion here:
 
-### Level 1: which polygons get treated at all
+> **The fill reads exactly one shapefile: whatever `[source] treatment_shp`
+> names in that basin's `config.toml`.** That is the file you edit. Nothing
+> else in `source/` is consulted.
+
+For Pine Valley that line reads:
+
+```toml
+[source]
+treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag.shp"
+```
+
+Every run records the resolved path in `{key}_run_metadata.txt`, so you can
+always confirm which file was actually used:
+
+```
+treatment_shp = ...\basins\053_PineValley\source\NV_phreats_MASTER_v11_PineValley_053_w_ag.shp
+```
+
+There are two ways to change the rates. Start with whichever matches the
+scope of your disagreement.
+
+### Option A: scale the whole basin (no shapefile editing)
+
+Edit `config.toml`:
+
+```toml
+[adjustment]
+baseline_adjust = 0.9        # every treated polygon's rate to 90%; 1.0 = no change
+```
+
+Re-run the fill. That is the entire procedure.
+
+### Option B: adjust individual polygons
+
+Open the shapefile named above in QGIS, add a numeric field called `adj_fctr`,
+and set it per feature. The scripts never write to your shapefile, but you are
+free to add columns to it, and this is the normal way to do it.
+
+| `adj_fctr` | Effect on that polygon |
+|---|---|
+| `0`, or blank, or no column at all | no override; the basin-wide `baseline_adjust` applies |
+| `0.8` | cut that polygon's rate by 20% |
+| `1.5` | raise it 50%, subject to the cap below |
+
+Save the edits, re-run the fill. A per-polygon value beats `baseline_adjust`.
+Rename the column with `[adjustment] attr_adjust` if you prefer a different
+name.
+
+### Confirming it took
+
+With no `adj_fctr` column present, the log says so and falls back:
+
+```
+   2b . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
+```
+
+With one, you get the factors that were actually applied:
+
+```
+   2b . Rasterizing per-polygon adjustment factors (column 'adj_fctr') ...
+    expert adjustment ACTIVE - basin default: 1.0
+    adjustment factors in treatment zone - min: 0.500  max: 1.000  mean: 0.940
+```
+
+The `adj_factor` column in `{key}_polygon_summary.csv` then shows what each
+polygon received.
+
+### Two limits to know before you tune
+
+**The downward-only cap cannot be overridden.** The adjusted rate can never
+exceed the original input ETg. The cap is applied per pixel, after the
+adjustment and before feathering. Setting `adj_fctr = 3.0` on three Pine Valley
+cropland polygons tripled nothing: each pixel pinned at its own input value, so
+the polygon mean rose toward but stayed under the input mean (polygon 14:
+baseline 0.7551, tripled and capped to a mean of 1.7655 against an input of
+1.8012). Capped pixels went from 6,052 to 9,776 and the basin figure moved from
+-43.40% to -34.97%. A large `adj_fctr` is a blunt way of saying "barely change
+this polygon"; if that is what you mean, use the next section instead.
+
+**Adjustments are local.** `adj_fctr = 0.5` on three polygons moved exactly
+those three, each landing at about half its previous value, and left the other
+148 rows identical.
+
+### Choosing which polygons get treated at all
 
 A polygon is treated when `scale_fctr > 0` **or** `rplc_rt > 0`. Only the sign
 matters.
@@ -462,20 +544,15 @@ matters.
 > **The magnitude of `scale_fctr` and `rplc_rt` is ignored.** They are on/off
 > triggers, nothing more. Multiplying both by ten across the whole Pine Valley
 > shapefile left every raster, the log, the metadata and every modeled column
-> identical, and the same -43.40%.
-> This is the single most likely thing for someone coming from the legacy
-> workflow to get wrong: `rplc_rt` used to be the value burned into the raster,
-> and it no longer is. The fill value now comes from the model, scaled only by
-> `adj_fctr` and `baseline_adjust`. (The magnitude does still show up in the
-> `legacy_rplc_rt` and `baseline_minus_legacy` review columns, which simply
-> report it.)
+> identical, and the same -43.40%. This is the likeliest thing for someone
+> coming from the legacy workflow to get wrong: `rplc_rt` used to be the value
+> burned into the raster, and it no longer is. The fill value comes from the
+> model, scaled only by `adj_fctr` and `baseline_adjust`. (The magnitude does
+> still appear in the `legacy_rplc_rt` and `baseline_minus_legacy` review
+> columns, which simply report it.)
 
-| To do this | Do this |
-|---|---|
-| Stop a polygon being replaced | Set both `scale_fctr` and `rplc_rt` to 0. It moves to the `52 untouched` count and its interior keeps the raw ETg. Not the same as leaving it unchanged: see the note below |
-| Treat a polygon the analyst missed | Set either column to any positive number |
-| Drive treatment off a different column | Set `[treatment] attr_scale` / `attr_replace` in `config.toml`, e.g. `attr_replace = "autoflag"` |
-| Generate a first pass automatically | `flag_irrigated.py` (see the next section), then edit its `autoflag` column |
+To stop a polygon being replaced, set both columns to 0. It moves to the
+`52 untouched` count and its interior keeps the raw ETg.
 
 **An untouched polygon is not necessarily an unchanged one.** Feathering
 reaches roughly 250 m outside each treated boundary, so a neighbour's collar
@@ -485,75 +562,30 @@ can still pull an untouched polygon's edge pixels down. In the Pine Valley run,
 Only the interior is guaranteed untouched. Set `feather_width_px = 0` if you
 need a hard boundary.
 
-### Level 2: scaling the modeled rate
+You can also drive treatment off a different column entirely, with
+`[treatment] attr_scale` and `attr_replace`. That is what the optional
+auto-flag workflow below uses.
 
-This is the expert-judgment knob, and the usual answer when a polygon is
-treated correctly but the number looks wrong.
+### When the problem is the model, not one polygon
 
-**One polygon.** Add a numeric `adj_fctr` column to the treatment shapefile:
-
-| Value | Effect |
-|---|---|
-| `0` (or blank) | no override; the basin-wide default applies |
-| `0.8` | cut that polygon's baseline by 20% |
-| `1.5` | raise it 50%, subject to the cap below |
-
-**Whole basin.** Set `[adjustment] baseline_adjust` in `config.toml`. `1.0` is
-no change.
-
-**Precedence and order.** A per-polygon `adj_fctr > 0` beats the basin-wide
-`baseline_adjust`. The adjustment is applied to the baseline, then the cap,
-then the feathering. Rename the column if you like, via
-`[adjustment] attr_adjust`.
-
-**The cap is not overridable.** The adjusted baseline can never exceed the
-original input ETg. Setting `adj_fctr = 3.0` on three Pine Valley cropland
-polygons did not triple anything. The cap is per pixel, so each pixel pins at
-its own input value and the polygon mean rises toward, but stays under, the
-input mean (polygon 14: baseline 0.7551, tripled and capped to a mean of 1.7655
-against an input of 1.8012). The capped-pixel
-count rose from 6,052 to 9,776, and the basin figure moved from -43.40% to
--34.97%. So a large `adj_fctr` is a blunt way of saying "barely change this
-polygon". If that is what you mean, set the trigger columns to 0 instead, which
-says it exactly.
-
-**Adjustments are local.** `adj_fctr = 0.5` on three polygons moved exactly
-those three, each landing at about half its previous value, and left the other
-148 rows identical. Confirm yours took by checking the log and the `adj_factor`
-column:
-
-```
-   2b . Rasterizing per-polygon adjustment factors (column 'adj_fctr') ...
-    expert adjustment ACTIVE - basin default: 1.0
-    adjustment factors in treatment zone - min: 0.500  max: 1.000  mean: 0.940
-```
-
-If your shapefile has no `adj_fctr` column, the fill says so and falls back to
-the basin default. `flag_irrigated.py` seeds an empty `adj_fctr` (and a
-`UniqueID`) into the `_autoflag` copy it writes, so you can edit it in QGIS
-without touching your original. Point `treatment_shp` at that copy and re-run.
-
-### Level 3: change the model
-
-Reach for these when the problem is not one polygon but the baseline itself.
-All live in `config.toml`.
+If you find yourself adjusting many polygons the same way, change the baseline
+instead. All of these live in `config.toml`.
 
 | Setting | Default | When to change it |
 |---|---|---|
-| `[baseline] spatial_weight_radius_px` | `33` (about 1 km) | Raise it where a vegetation class is sparse and local means are noisy. `0` collapses to one flat rate per class, which is the most conservative and most explainable option |
+| `[baseline] spatial_weight_radius_px` | `33` (about 1 km) | Raise it where a vegetation class is sparse and local means are noisy. `0` collapses to one flat rate per class, the most conservative and most explainable option |
 | `[treatment] buffer_m` | `90.0` | Raise it where flood irrigation wets ground well beyond the field edge, so those pixels stop polluting the training set |
 | `[treatment] feather_width_px` | `4` (about 120 m) | Raise it if the blend collar looks abrupt in `diag_feather_map.png`; `0` disables feathering |
 | `[source] boundary_shp` | unset | Set it when the training boundary is wrong, which the fill warns about on custom basins |
-| `[baseline] max_train_pixels`, `random_seed` | `500000`, `42` | Reproducibility and speed only. Leave them alone unless a basin is huge |
 | `[crs_overrides]` | empty | A raster whose stored CRS is malformed |
 
-Changing a level 3 setting changes the baseline everywhere, including polygons
-you were happy with, so re-check the whole basin afterward rather than just the
-polygon that prompted it.
+These change the baseline everywhere, including polygons you were happy with,
+so re-check the whole basin afterward rather than just the one that prompted
+the change.
 
 ### Recording what you did
 
-`run_metadata.txt` captures every parameter used, including
+`{key}_run_metadata.txt` captures every parameter used, including
 `baseline_adjust`, `adjustment_active`, `per_polygon_overrides`, `buffer_m`,
 and `spatial_weight_radius_px`, so a run is self-documenting as to *what* was
 set. It cannot record *why*. Put that in a note in the basin folder or a commit
@@ -563,8 +595,25 @@ one.
 
 ## Optional. Auto-flag instead of hand-picking polygons
 
-Use this when you do not already have `scale_fctr` / `rplc_rt` filled in and
-want a first pass to react to rather than a blank slate.
+Use this only when you do not already have `scale_fctr` / `rplc_rt` filled in
+and want a first pass to react to rather than a blank slate. If an analyst has
+already set those columns, skip this section: you never need it, and skipping
+it means there is only ever one shapefile in play.
+
+**This is the step that creates a second shapefile.** It writes a copy,
+`<your treatment shapefile>_autoflag.shp`, into the same `source/` folder,
+leaving your original untouched. Two things follow from that:
+
+- Nothing uses the copy until you point `[source] treatment_shp` at it.
+- Keep `treatment_shp` on your **original** while you are iterating on flags.
+  If you point it at the copy and re-run the flagger, you get
+  `..._autoflag_autoflag.shp` and the sticky-override logic looks in the wrong
+  place. Switch `treatment_shp` to the copy only when you run the fill.
+
+As a convenience, the copy is also seeded with an empty `adj_fctr` and a
+`UniqueID` column if your source lacks them, so the tuning knob from the
+previous section is already there to edit. That is the only reason those
+columns show up in the copy; the knob itself is not tied to this workflow.
 
 ```bash
 python flag_irrigated.py 053_PineValley

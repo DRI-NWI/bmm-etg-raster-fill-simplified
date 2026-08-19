@@ -67,8 +67,6 @@ ATTR_ADJUST      = "adj_fctr"   # per-polygon override column in shapefile
 
 # Baseline (spatially weighted per-BpS-class mean)
 SPATIAL_WEIGHT_RADIUS_PX = 33   # ~1 km at 30 m; 0 = flat basin-wide class mean
-MAX_TRAIN_PIXELS = 500_000
-RANDOM_SEED      = 42
 
 # Auto-flagging (flag_irrigated.py: screen polygons for irrigation influence)
 FLAG_RATIO_THRESH  = 1.5        # flag if polygon mean ETg >= ratio x its BpS-class baseline
@@ -204,8 +202,6 @@ def load_basin_from_toml(toml_path: Path) -> None:
         baseline.get("spatial_weight_radius_px",
                      baseline.get("spatial_fallback_radius_px", 33))
     )
-    g["MAX_TRAIN_PIXELS"] = _int_or_none(baseline.get("max_train_pixels", 500_000))
-    g["RANDOM_SEED"]      = int(baseline.get("random_seed", 42))
 
     # -- Auto-flagging parameters (flag_irrigated.py) -----------------------
     flag = raw.get("flag", {})
@@ -323,11 +319,3 @@ def backfill_source_files(config_path: Path, **filenames) -> list[str]:
     if filled:
         config_path.write_text(text, encoding="utf-8")
     return filled
-
-
-# -- Helpers -----------------------------------------------------------------
-
-def _int_or_none(val):
-    if val is None or val == 0:
-        return None
-    return int(val)

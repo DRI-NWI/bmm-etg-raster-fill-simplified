@@ -15,8 +15,8 @@ separating irrigation-enhanced ET from natural groundwater discharge -- was
 established in prior peer-reviewed work by DRI staff (see README.md, References).
 
 This repository is a simplified fork of the original `bmm-etg-raster-fill`.
-The original two-stage model (per-BpS-class mean refined by a LightGBM /
-RandomForest terrain-residual model) was reduced to its baseline after DRI
+The original two-stage model (per-BpS-class mean refined by a machine-learning
+terrain-residual model) was reduced to its baseline after DRI
 cross-validation showed the terrain-residual model never improved on the
 BpS-class baseline. See CHANGELOG.md for the full rationale.
 
