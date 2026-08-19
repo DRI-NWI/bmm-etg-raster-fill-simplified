@@ -9,14 +9,14 @@ Generates diagnostic plots and console distribution summaries:
 Writes seven PNGs.  The eighth diagnostic figure in output/,
 ``{basin_key}_diag_pct_change_map.png``, is written by etg_baseline_fill.py.
 
-  1. Histogram — ETg distributions (outside vs treatment, before and after).
-  2. Scatter — predicted baseline vs. original ETg for treatment-zone pixels.
-  3. BpS box-plots — ETg by vegetation class (outside vs treatment).
-  4. Map panels — side-by-side original, baseline prediction, and final ETg.
-  5. Difference map — change in treatment zones (red = reduced, blue = increased).
-  6. Treatment-zone map — color-coded zones (outside / treatment).
-  7. Feather weight map — blend weights and edge detail (if feathering enabled).
-  8. Console summary — distribution statistics (n, mean, median, p10, p90).
+  1. Histogram - ETg distributions (outside vs treatment, before and after).
+  2. Scatter - predicted baseline vs. original ETg for treatment-zone pixels.
+  3. BpS box-plots - ETg by vegetation class (outside vs treatment).
+  4. Map panels - side-by-side original, baseline prediction, and final ETg.
+  5. Difference map - change in treatment zones (red = reduced, blue = increased).
+  6. Treatment-zone map - color-coded zones (outside / treatment).
+  7. Feather weight map - blend weights and edge detail (if feathering enabled).
+  8. Console summary - distribution statistics (n, mean, median, p10, p90).
 
 Usage:
     cd <project folder>
@@ -83,8 +83,8 @@ def main(study_area: str | None = None):
 
     out = cfg.OUT_DIR
 
-    # ── Load rasters ─────────────────────────────────────────────────────────
-    print("Loading rasters …")
+    # -- Load rasters ---------------------------------------------------------
+    print("Loading rasters ...")
 
     # Prefer the raw (unmodified) ETg raster so diagnostics compare the true
     # Landsat-derived ETg against the modeled baseline and final product.
@@ -107,12 +107,12 @@ def main(study_area: str | None = None):
     final_treat = etg_final[is_treat & np.isfinite(etg_final)]
     base_treat  = etg_baseline[is_treat & np.isfinite(etg_baseline)]
 
-    # ── 1. Histogram comparison ──────────────────────────────────────────────
-    # Y-axis is "% of group" — each histogram is normalized so its bars sum to
+    # -- 1. Histogram comparison ----------------------------------------------
+    # Y-axis is "% of group" - each histogram is normalized so its bars sum to
     # 100%.  This lets us compare the shape of distributions whose pixel counts
-    # differ by orders of magnitude (basin floor ≫ treatment zones) on one plot.
+    # differ by orders of magnitude (basin floor >> treatment zones) on one plot.
     # Group sizes (n) are annotated in the legend so magnitude context isn't lost.
-    print("Plotting histograms …")
+    print("Plotting histograms ...")
     fig, ax = plt.subplots(figsize=(9, 5))
     p99 = np.nanpercentile(etg_orig[np.isfinite(etg_orig)], 99)
     bins = np.linspace(0, p99, 80)
@@ -127,10 +127,10 @@ def main(study_area: str | None = None):
             label=f"Outside treatment (n = {len(orig_out):,})")
     ax.hist(orig_treat,  bins=bins, alpha=0.35,
             weights=_pct_weights(orig_treat),
-            label=f"Treatment zones – original (n = {len(orig_treat):,})")
+            label=f"Treatment zones - original (n = {len(orig_treat):,})")
     ax.hist(final_treat, bins=bins, alpha=0.35,
             weights=_pct_weights(final_treat),
-            label=f"Treatment zones – filled (n = {len(final_treat):,})")
+            label=f"Treatment zones - filled (n = {len(final_treat):,})")
     ax.set_xlabel("ETg (ft/yr)")
     ax.set_ylabel("% of group")
     ax.set_title("ETg distributions: outside vs treatment zones")
@@ -138,10 +138,10 @@ def main(study_area: str | None = None):
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_histogram.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / f'{sa}_diag_histogram.png'}")
+    print(f"  -> {out / f'{sa}_diag_histogram.png'}")
 
-    # ── 2. Scatter: baseline vs original (treatment zones) ───────────────────
-    print("Plotting scatter …")
+    # -- 2. Scatter: baseline vs original (treatment zones) -------------------
+    print("Plotting scatter ...")
     n_samp = min(len(orig_treat), 20_000)
     if n_samp > 0:
         rng = np.random.default_rng(42)
@@ -157,10 +157,10 @@ def main(study_area: str | None = None):
         fig.tight_layout()
         fig.savefig(out / f"{sa}_diag_scatter.png", dpi=150)
         plt.close(fig)
-        print(f"  → {out / f'{sa}_diag_scatter.png'}")
+        print(f"  -> {out / f'{sa}_diag_scatter.png'}")
 
-    # ── 3. Per-BpS box-plots ─────────────────────────────────────────────────
-    print("Plotting BpS box-plots …")
+    # -- 3. Per-BpS box-plots -------------------------------------------------
+    print("Plotting BpS box-plots ...")
     bps_treat_arr = bps[is_treat & (bps > 0)]
     if len(bps_treat_arr) > 0:
         uniq, counts = np.unique(bps_treat_arr, return_counts=True)
@@ -187,10 +187,10 @@ def main(study_area: str | None = None):
             fig.tight_layout()
             fig.savefig(out / f"{sa}_diag_bps_boxplots.png", dpi=150)
             plt.close(fig)
-            print(f"  → {out / f'{sa}_diag_bps_boxplots.png'}")
+            print(f"  -> {out / f'{sa}_diag_bps_boxplots.png'}")
 
-    # ── 4. Map panels ────────────────────────────────────────────────────────
-    print("Plotting map panels …")
+    # -- 4. Map panels --------------------------------------------------------
+    print("Plotting map panels ...")
     vmin, vmax = 0, np.nanpercentile(etg_orig[np.isfinite(etg_orig)], 98)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 8))
@@ -206,10 +206,10 @@ def main(study_area: str | None = None):
                  label="ETg (ft/yr)")
     fig.savefig(out / f"{sa}_diag_map_panels.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / f'{sa}_diag_map_panels.png'}")
+    print(f"  -> {out / f'{sa}_diag_map_panels.png'}")
 
-    # ── 5. Difference map ────────────────────────────────────────────────────
-    print("Plotting difference map …")
+    # -- 5. Difference map ----------------------------------------------------
+    print("Plotting difference map ...")
     diff = etg_orig - etg_final
     diff[treatment == 0] = np.nan
 
@@ -217,17 +217,17 @@ def main(study_area: str | None = None):
     fin = diff[np.isfinite(diff)]
     vabs = np.nanpercentile(np.abs(fin), 98) if len(fin) > 0 else 1
     im = ax.imshow(diff, cmap="RdBu_r", vmin=-vabs, vmax=vabs)
-    ax.set_title("ETg change in treatment zones (original − final)\n"
+    ax.set_title("ETg change in treatment zones (original - final)\n"
                  "Red = reduced  |  Blue = increased")
     ax.axis("off")
-    fig.colorbar(im, ax=ax, shrink=0.6, label="ΔETg (ft/yr)")
+    fig.colorbar(im, ax=ax, shrink=0.6, label="Delta ETg (ft/yr)")
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_difference_map.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / f'{sa}_diag_difference_map.png'}")
+    print(f"  -> {out / f'{sa}_diag_difference_map.png'}")
 
-    # ── 6. Treatment-zone map ────────────────────────────────────────────────
-    print("Plotting treatment-zone map …")
+    # -- 6. Treatment-zone map ------------------------------------------------
+    print("Plotting treatment-zone map ...")
     tmap = np.full_like(etg_orig, np.nan)
     tmap[is_outside] = 0   # outside
     tmap[is_treat]   = 1   # treatment
@@ -245,12 +245,12 @@ def main(study_area: str | None = None):
     fig.tight_layout()
     fig.savefig(out / f"{sa}_diag_treatment_map.png", dpi=150)
     plt.close(fig)
-    print(f"  → {out / f'{sa}_diag_treatment_map.png'}")
+    print(f"  -> {out / f'{sa}_diag_treatment_map.png'}")
 
-    # ── 7. Feather weight map (if feathering was used) ───────────────────────
+    # -- 7. Feather weight map (if feathering was used) -----------------------
     feather_path = out / "feather_weight.tif"
     if feather_path.exists():
-        print("Plotting feather weight map …")
+        print("Plotting feather weight map ...")
         fweight = _read(feather_path)
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 7))
@@ -261,29 +261,29 @@ def main(study_area: str | None = None):
         axes[0].axis("off")
         fig.colorbar(im0, ax=axes[0], shrink=0.6, label="Weight")
 
-        # Right: zoomed ETg comparison – original vs final for a treatment area
+        # Right: zoomed ETg comparison - original vs final for a treatment area
         # Show the full difference map with feathered edges visible
         diff_f = etg_orig - etg_final
         diff_f[treatment == 0] = np.nan
         fin = diff_f[np.isfinite(diff_f)]
         vabs = np.nanpercentile(np.abs(fin), 98) if len(fin) > 0 else 1
         im1 = axes[1].imshow(diff_f, cmap="RdBu_r", vmin=-vabs, vmax=vabs)
-        axes[1].set_title("ΔETg with feathered edges\n(compare to diag_difference_map)")
+        axes[1].set_title("Delta ETg with feathered edges\n(compare to diag_difference_map)")
         axes[1].axis("off")
-        fig.colorbar(im1, ax=axes[1], shrink=0.6, label="ΔETg (ft/yr)")
+        fig.colorbar(im1, ax=axes[1], shrink=0.6, label="Delta ETg (ft/yr)")
 
         fig.tight_layout()
         fig.savefig(out / f"{sa}_diag_feather_map.png", dpi=150)
         plt.close(fig)
-        print(f"  → {out / f'{sa}_diag_feather_map.png'}")
+        print(f"  -> {out / f'{sa}_diag_feather_map.png'}")
 
-    # ── Console summary ──────────────────────────────────────────────────────
-    print("\n── Distribution summary ──────────────────────────────")
+    # -- Console summary ------------------------------------------------------
+    print("\n-- Distribution summary ------------------------------")
     for label, arr in [
         ("Outside treatment", orig_out),
-        ("Treatment zones – original", orig_treat),
-        ("Treatment zones – baseline pred", base_treat),
-        ("Treatment zones – final", final_treat),
+        ("Treatment zones - original", orig_treat),
+        ("Treatment zones - baseline pred", base_treat),
+        ("Treatment zones - final", final_treat),
     ]:
         a = arr[np.isfinite(arr)] if len(arr) > 0 else arr
         if len(a) > 0:
@@ -291,7 +291,7 @@ def main(study_area: str | None = None):
                   f"mean={np.mean(a):.3f}  med={np.median(a):.3f}  "
                   f"p10={np.percentile(a,10):.3f}  p90={np.percentile(a,90):.3f}")
 
-    print("\nDone – diagnostic plots saved to:", out.resolve())
+    print("\nDone - diagnostic plots saved to:", out.resolve())
 
 
 def _cli():
@@ -354,7 +354,7 @@ def _cli():
         main(keys[0])
         return 0
 
-    print(f"Running diagnostics on {len(keys)} basins …\n")
+    print(f"Running diagnostics on {len(keys)} basins ...\n")
     failures = []
     for i, key in enumerate(keys, 1):
         header = f"[{i}/{len(keys)}] {key}"

@@ -414,6 +414,10 @@ def main(study_area: str | None = None) -> None:
         if attr_adjust and attr_adjust not in gdf.columns:
             _log(f"   2b . Per-polygon adjustment column '{attr_adjust}' not found "
                  f"in shapefile - using basin-wide default ({basin_adjust})")
+            _log(f"        To tune single polygons, add a numeric '{attr_adjust}' "
+                 f"column to the treatment shapefile (0 = no override, 0.8 = "
+                 f"cut that polygon's baseline 20%), or run flag_irrigated.py, "
+                 f"which seeds it into its _autoflag copy.")
         else:
             _log(f"   2b . No per-polygon adjustment overrides - "
                  f"using basin-wide default ({basin_adjust})")
@@ -880,14 +884,32 @@ def main(study_area: str | None = None) -> None:
         if col in gdf_orig.columns:
             gdf_orig[col] = gdf_orig[col].fillna(0).astype(float)
 
+    # Pick a column that actually identifies a polygon.  A candidate only
+    # qualifies if every value is present and distinct: ET_unit used to be
+    # accepted here, but it is a category ("cropland" x96), so the summary
+    # could not be traced back to a feature.  Falling back to the row position
+    # always works, and matches the feature order you see in QGIS.
     id_col = None
-    for candidate in ("DRI_ID", "UniqueID", "ET_unit", "FID"):
-        if candidate in gdf_orig.columns:
+    for candidate in ("DRI_ID", "UniqueID", "OBJECTID", "FID"):
+        if candidate not in gdf_orig.columns:
+            continue
+        vals = gdf_orig[candidate]
+        if vals.notna().all() and vals.is_unique:
             id_col = candidate
             break
+        _log(f"    note: '{candidate}' is not a unique identifier - skipping it")
     if id_col is None:
         gdf_orig["_row_id"] = range(len(gdf_orig))
         id_col = "_row_id"
+        _log("    polygon_id = shapefile row number (no unique ID column found; "
+             "add DRI_ID or UniqueID to label rows with your own IDs)")
+    else:
+        _log(f"    polygon_id = '{id_col}'")
+
+    # Carry the legacy hand-picked replacement rate through so the summary can
+    # be reviewed side by side with the modeled baseline.  rplc_rt is the BMM
+    # convention for that rate; skip the columns entirely when it is absent.
+    legacy_col = "rplc_rt" if "rplc_rt" in gdf_orig.columns else None
 
     rows = []
     for i, row in gdf_orig.iterrows():
@@ -936,6 +958,14 @@ def main(study_area: str | None = None) -> None:
             "mean_baseline_ETg": round(mean_base, 4),
             "mean_final_ETg": round(mean_final, 4),
         }
+        if legacy_col is not None:
+            legacy_rate = float(row.get(legacy_col, 0) or 0)
+            rec["legacy_rplc_rt"] = round(legacy_rate, 4)
+            # Only meaningful where the analyst actually set a rate.
+            rec["baseline_minus_legacy"] = (
+                round(mean_base - legacy_rate, 4)
+                if legacy_rate > 0 and np.isfinite(mean_base) else ""
+            )
         for extra in ("Descrip", "crop_major", "ET_unit"):
             if extra in gdf_orig.columns:
                 rec[extra] = row[extra]

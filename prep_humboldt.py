@@ -1,15 +1,15 @@
 """
-prep_humboldt.py — Stage Humboldt Basin training data (Huntington et al., 2022)
+prep_humboldt.py - Stage Humboldt Basin training data (Huntington et al., 2022)
 ================================================================================
 
 Adapts the Humboldt_Data/ bundle (one master shapefile + 35 per-HA ETg rasters)
 into the per-basin BMM Raster Fill directory structure.
 
 For each raster in Humboldt_Data/RASTERS:
-  1. Parse the 1–3 digit HA number from the filename.
+  1. Parse the 1-3 digit HA number from the filename.
   2. Look up the canonical NWI basin key (e.g. "42" -> "042_MarysRiverArea")
      by joining on BasinID from NWI_Investigations_EPSG_32611.shp.
-  3. Convert the raster from mm/yr to ft/yr (÷304.8).
+  3. Convert the raster from mm/yr to ft/yr (/304.8).
   4. Write it to  basins/<KEY>/source/<KEY>_ETg_Huntington2022.tif
 
 For each HA present in the Humboldt master shapefile:
@@ -77,7 +77,7 @@ URL:      https://www.dri.edu/project/humboldt-etg/
 
 Files in this directory tagged with "_Huntington2022" originate from the
 2022 Humboldt ETg report's training dataset. Raster ETg values were
-converted from mm/yr to ft/yr (÷304.8) when staged. The treatment
+converted from mm/yr to ft/yr (/304.8) when staged. The treatment
 shapefile is a per-HA subset of Humboldt_ALL_INSIDE_DISS.shp with a
 derived rplc_rt column = FixETg_mm / 304.8.
 """
@@ -235,7 +235,7 @@ def _replace_toml_field(text: str, key: str, value: str) -> str:
     pat = _FIELD_RE[key]
     if pat.search(text):
         return pat.sub(rf'\1"{value}"', text)
-    # Field missing — append under a [source] header if one exists, else add it.
+    # Field missing - append under a [source] header if one exists, else add it.
     if re.search(r"^\[source\]", text, flags=re.MULTILINE):
         return re.sub(r"(^\[source\][^\[]*)",
                       lambda m: m.group(1).rstrip() + f'\n{key} = "{value}"\n',
@@ -270,7 +270,7 @@ def main() -> int:
     rasters = sorted(RASTER_DIR.glob("*.tif"))
     print(f"Found {len(rasters)} rasters in {RASTER_DIR.name}/")
     print(f"NWI lookup has {len(nwi)} basins")
-    print(f"{'DRY RUN — nothing will be written.' if args.dry_run else 'Staging basins ...'}")
+    print(f"{'DRY RUN - nothing will be written.' if args.dry_run else 'Staging basins ...'}")
     print()
 
     ok, skipped, errors = 0, 0, 0
@@ -297,7 +297,7 @@ def main() -> int:
         etg_dst    = source_dir / etg_name
         treat_dst  = source_dir / treat_name
 
-        print(f"• HA {ha3}  ->  {key}")
+        print(f"* HA {ha3}  ->  {key}")
         print(f"    raster : {src.name}  ->  source/{etg_name}  (mm/yr -> ft/yr)")
 
         if args.dry_run:

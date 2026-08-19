@@ -2,6 +2,55 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.3] - 2026-07-29
+
+Makes the review-and-tune loop usable.  No change to the modeled values: the
+Pine Valley fill reproduces the 1.0.0 numbers exactly.
+
+### Fixed
+
+- **`polygon_id` was not an identifier.**  The column picker accepted
+  `ET_unit`, which is a category, so 96 rows of the Pine Valley summary all
+  read `cropland` and no row could be traced back to a feature.  Candidates
+  (`DRI_ID`, `UniqueID`, `OBJECTID`, `FID`) are now accepted only when every
+  value is present and distinct, otherwise `polygon_id` is the shapefile row
+  number.  The run logs which one it used.
+
+### Added
+
+- `{key}_polygon_summary.csv` gains `legacy_rplc_rt` and
+  `baseline_minus_legacy` when the treatment shapefile carries `rplc_rt`, so
+  the modeled baseline can be reviewed against the analyst's hand-picked rate
+  without a manual join.
+- `flag_irrigated.py` seeds empty `UniqueID` and `adj_fctr` columns into the
+  `_autoflag` copy it writes when the source lacks them, so the per-polygon
+  tuning knob exists without anyone editing the original shapefile.  The
+  original is still never modified.
+- The fill now says what to do when `adj_fctr` is missing, instead of only
+  reporting that it is.
+- A "Where the rates are, and how to tune them" section in
+  `COOKBOOK_PineValley.md`.
+
+## [1.0.2] - 2026-07-29
+
+### Fixed
+
+- **`UnicodeEncodeError` on Windows.**  `diagnostics.py`, `etunit_summary.py`,
+  and `prep_humboldt.py` printed characters (`->`, `x`, `...`, box-drawing
+  rules, en and em dashes) that cp1252 cannot encode.  Windows uses the locale
+  code page, not UTF-8, whenever stdout is redirected or captured, so `pytest`
+  and `python run_all.py > log.txt` both died while the same commands worked
+  in an interactive console.  Four smoke tests errored out at
+  `etunit_summary.py` line 128.  All Python source is now plain ASCII.
+
+### Added
+
+- Two regression guards for the above, both of which reproduce the Windows
+  failure on Linux and macOS:
+  - `tests/test_repo_files.py::test_source_is_ascii` scans every `.py` file.
+  - `tests/test_pipeline_smoke.py` now runs its subprocesses with
+    `PYTHONIOENCODING=cp1252`.
+
 ## [1.0.1] - 2026-07-29
 
 Packaging and documentation fixes found while re-running the Pine Valley

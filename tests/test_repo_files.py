@@ -46,3 +46,33 @@ def test_required_file_is_not_gitignored(rel_path):
         f"{rel_path} is excluded by .gitignore, so it will be absent from a "
         f"fresh clone.  Add a negation rule for it."
     )
+
+
+# ---------------------------------------------------------------------------
+# Console encoding
+# ---------------------------------------------------------------------------
+# On Windows, redirected or captured stdout defaults to the locale code page
+# (cp1252 on a US install), not UTF-8.  A single non-ASCII character in a
+# printed string raises UnicodeEncodeError there and kills the run, even
+# though it works fine on Linux and in an interactive Windows console.
+# Keeping the source pure ASCII removes the whole class of failure.
+
+def _py_sources():
+    return sorted(PROJECT_ROOT.glob("*.py")) + sorted((PROJECT_ROOT / "tests").glob("*.py"))
+
+
+@pytest.mark.parametrize(
+    "py_file", _py_sources(), ids=lambda p: p.name
+)
+def test_source_is_ascii(py_file):
+    text = py_file.read_text(encoding="utf-8")
+    offenders = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for col, ch in enumerate(line, 1):
+            if ord(ch) > 127:
+                offenders.append(f"{py_file.name}:{lineno}:{col} {ch!r} (U+{ord(ch):04X})")
+    assert not offenders, (
+        "Non-ASCII characters in source. Windows cannot print these when "
+        "output is redirected (cp1252). Use an ASCII equivalent:\n  "
+        + "\n  ".join(offenders[:20])
+    )

@@ -35,7 +35,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-# ── Make sure we can import basin_config regardless of cwd ──────────────────
+# -- Make sure we can import basin_config regardless of cwd ------------------
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here))
 cfg = None  # set by main()
@@ -48,7 +48,7 @@ except ImportError as e:
     sys.exit(f"Missing dependency: {e}\nActivate the etg_fill conda env first.")
 
 
-# ── Display-name mapping ────────────────────────────────────────────────────
+# -- Display-name mapping ----------------------------------------------------
 # The original summary CSV used presentation labels; map from shapefile values.
 ET_UNIT_DISPLAY = {
     "Cropland":               "Irrigated Cropland",
@@ -111,8 +111,8 @@ def main(study_area: str | None = None):
         sys.exit(f"{etg_final_path.name} not found in {out_dir}. "
                  f"Run: python etg_baseline_fill.py {sa}")
 
-    # ── 1. Read the final ETg raster ─────────────────────────────────────────
-    _log("Reading ETg_final raster …")
+    # -- 1. Read the final ETg raster -----------------------------------------
+    _log("Reading ETg_final raster ...")
     with rasterio.open(etg_final_path) as src:
         etg = src.read(1).astype(np.float32)
         transform = src.transform
@@ -125,10 +125,10 @@ def main(study_area: str | None = None):
     m2_per_acre = 4046.8564224
     pixel_area_m2 = pixel_w * pixel_h
     pixel_area_ac = pixel_area_m2 / m2_per_acre
-    _log(f"  Pixel size: {pixel_w:.1f} × {pixel_h:.1f} m  →  {pixel_area_ac:.6f} ac")
+    _log(f"  Pixel size: {pixel_w:.1f} x {pixel_h:.1f} m  ->  {pixel_area_ac:.6f} ac")
 
-    # ── 2. Read the treatment shapefile ──────────────────────────────────────
-    _log("Reading treatment shapefile …")
+    # -- 2. Read the treatment shapefile --------------------------------------
+    _log("Reading treatment shapefile ...")
     gdf = gpd.read_file(cfg.TREATMENT_SHP)
     if not gdf.crs.equals(crs):
         gdf = gdf.to_crs(crs)
@@ -138,7 +138,7 @@ def main(study_area: str | None = None):
     # script still produces a usable summary CSV rather than aborting.
     basin_only = "ET_unit" not in gdf.columns
     if basin_only:
-        _log("  Shapefile has no 'ET_unit' column — producing basin-wide "
+        _log("  Shapefile has no 'ET_unit' column - producing basin-wide "
              "summary only.")
         gdf["ET_unit"] = "Basin Total"
     else:
@@ -146,8 +146,8 @@ def main(study_area: str | None = None):
         # Title-case first, then apply the display-name mapping.
         gdf["ET_unit"] = gdf["ET_unit"].str.strip().str.title()
 
-    # ── 3. Rasterize each ET unit ────────────────────────────────────────────
-    _log("Rasterizing ET units …")
+    # -- 3. Rasterize each ET unit --------------------------------------------
+    _log("Rasterizing ET units ...")
     unique_units = sorted(gdf["ET_unit"].dropna().unique())
     _log(f"  Found {len(unique_units)} ET units: {unique_units}")
 
@@ -172,15 +172,15 @@ def main(study_area: str | None = None):
         n_px = int(px.sum())
 
         if n_px == 0:
-            _log(f"  {unit}: 0 valid pixels — skipping")
+            _log(f"  {unit}: 0 valid pixels - skipping")
             continue
 
         area_ac     = n_px * pixel_area_ac
         mean_rate   = float(np.mean(vals))
         std_rate    = float(np.std(vals))
-        volume_acft = float(np.sum(vals)) * pixel_area_ac   # sum(rate_ft) × area_per_pixel
+        volume_acft = float(np.sum(vals)) * pixel_area_ac   # sum(rate_ft) x area_per_pixel
 
-        # Uncertainty: mean ± 1 SD, bounded ≥ 0
+        # Uncertainty: mean +/- 1 SD, bounded >= 0
         rate_low = max(0.0, mean_rate - std_rate)
         rate_high = mean_rate + std_rate
         vol_low  = max(0.0, rate_low * area_ac)
@@ -200,7 +200,7 @@ def main(study_area: str | None = None):
         _log(f"  {display:30s}  pixels={n_px:>8,}  area={area_ac:>10.2f} ac  "
              f"rate={mean_rate:.4f} ft  vol={volume_acft:>10.2f} acft")
 
-    # ── 4. Build ordered output with totals row ──────────────────────────────
+    # -- 4. Build ordered output with totals row ------------------------------
     rows = []
     for label in ET_UNIT_ORDER:
         if label in results:
@@ -211,7 +211,7 @@ def main(study_area: str | None = None):
         if label not in ET_UNIT_ORDER:
             rows.append(rec)
 
-    # Totals row — skipped when there's no ET_unit breakdown, since the
+    # Totals row - skipped when there's no ET_unit breakdown, since the
     # single "Basin Total" row already is the total.
     if not basin_only:
         total_area = sum(r["Area (ac)"]             for r in rows)
@@ -229,7 +229,7 @@ def main(study_area: str | None = None):
             "ETg Rate High (ft)":     "",
         })
 
-    # ── 5. Write CSV ─────────────────────────────────────────────────────────
+    # -- 5. Write CSV ---------------------------------------------------------
     fieldnames = [
         "ET Unit", "Area (ac)",
         "ETg Volume (acft)", "ETg Volume Low (acft)", "ETg Volume High (acft)",
@@ -248,11 +248,11 @@ def main(study_area: str | None = None):
     else:
         _log(f"  {len(rows) - 1} ET units + 1 totals row")
 
-    # ── 6. Print comparison table ────────────────────────────────────────────
-    _log("\n── Modeled ET Unit Summary ──────────────────────────────────────")
+    # -- 6. Print comparison table --------------------------------------------
+    _log("\n-- Modeled ET Unit Summary --------------------------------------")
     _log(f"  {'ET Unit':30s} {'Area (ac)':>12s} {'Vol (acft)':>12s} "
          f"{'Rate (ft)':>10s}  {'Low':>8s}  {'High':>8s}")
-    _log("  " + "─" * 86)
+    _log("  " + "-" * 86)
     for r in rows:
         lbl = r["ET Unit"] if r["ET Unit"] else "TOTAL"
         rate_str = f"{r['ETg Rate (ft)']:.4f}" if isinstance(r["ETg Rate (ft)"], float) else ""
@@ -319,13 +319,13 @@ def _cli():
     if not keys:
         sys.exit("No basins to process.")
 
-    # Single basin — run directly and propagate any exit.
+    # Single basin - run directly and propagate any exit.
     if len(keys) == 1:
         main(keys[0])
         return 0
 
     # Batch mode: run each basin, collect failures, print summary.
-    print(f"Running etunit_summary on {len(keys)} basins …\n")
+    print(f"Running etunit_summary on {len(keys)} basins ...\n")
     failures = []
     for i, key in enumerate(keys, 1):
         header = f"[{i}/{len(keys)}] {key}"

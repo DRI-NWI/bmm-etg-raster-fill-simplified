@@ -377,6 +377,25 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
         out[attr_scale] = 0.0
     if not has_replace:
         out[attr_replace] = 0.0
+
+    # Seed the two columns the review-and-tune loop needs, if the source
+    # shapefile lacks them.  This is written to the _autoflag copy only; the
+    # original treatment shapefile is never modified.
+    #   UniqueID  gives every polygon a stable label, so a row in
+    #             {key}_polygon_summary.csv can be traced back to a feature.
+    #   adj_fctr  is the per-polygon expert adjustment the fill reads.  0 means
+    #             "no override"; set it to e.g. 0.8 to cut that polygon's
+    #             baseline by 20%.
+    seeded = []
+    if "UniqueID" not in out.columns:
+        out["UniqueID"] = range(len(out))
+        seeded.append("UniqueID")
+    if "adj_fctr" not in out.columns:
+        out["adj_fctr"] = 0.0
+        seeded.append("adj_fctr")
+    if seeded:
+        _log(f"    seeded tuning column(s) {', '.join(seeded)} "
+             f"(empty; edit in QGIS to adjust individual polygons)")
     if mirror_to:
         out[mirror_to] = out[F_DECIDE].astype(float)
         _log(f"    mirrored '{F_DECIDE}' into trigger column '{mirror_to}'")

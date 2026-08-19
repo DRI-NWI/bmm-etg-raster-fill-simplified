@@ -1,5 +1,5 @@
 """
-bps_utils.py  —  LANDFIRE BpS raster attribute table (RAT) utilities.
+bps_utils.py  -  LANDFIRE BpS raster attribute table (RAT) utilities.
 
 Extracts class names and colours from the source BpS raster and writes
 QGIS-compatible symbology files alongside clipped basin BpS rasters so
@@ -7,9 +7,9 @@ they render with the original LANDFIRE colour palette.
 
 Two sidecar formats are written:
 
-    BpS.clr   — ESRI-style colour file (works in QGIS, ArcGIS, GDAL).
+    BpS.clr   - ESRI-style colour file (works in QGIS, ArcGIS, GDAL).
                 Each line: ``VALUE  R  G  B  ALPHA  LABEL``
-    BpS.qml   — QGIS layer style file with a paletted/unique-values
+    BpS.qml   - QGIS layer style file with a paletted/unique-values
                 renderer.  Loads automatically when the .tif is opened
                 in QGIS (if the .qml shares the same stem).
 
@@ -36,7 +36,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-# Type alias: code → (R, G, B, class_name)
+# Type alias: code -> (R, G, B, class_name)
 BpsLookup = Dict[int, Tuple[int, int, int, str]]
 
 # Default path for the cached lookup (written once by prep_statewide,
@@ -76,7 +76,7 @@ def extract_bps_lookup(
 
     lut: BpsLookup = {}
 
-    # ── Try GDAL RAT first (osgeo.gdal, independent of rasterio) ──────
+    # -- Try GDAL RAT first (osgeo.gdal, independent of rasterio) ------
     # LANDFIRE BpS rasters carry a Raster Attribute Table with columns
     # BPS_NAME, R, G, B, etc.  rasterio doesn't expose the RAT, so we
     # open the file with GDAL directly.
@@ -114,9 +114,9 @@ def extract_bps_lookup(
                     lut[code] = (r, g, b, name)
             ds = None  # close GDAL dataset
     except Exception:
-        pass  # GDAL not available or RAT missing — try colour table next
+        pass  # GDAL not available or RAT missing - try colour table next
 
-    # ── Fall back to rasterio colour table ─────────────────────────────
+    # -- Fall back to rasterio colour table -----------------------------
     if not lut:
         with rasterio.open(bps_path) as src:
             try:
@@ -130,7 +130,7 @@ def extract_bps_lookup(
             except Exception:
                 pass
 
-    # ── Last resort: enumerate unique values with grey palette ──────
+    # -- Last resort: enumerate unique values with grey palette ------
     if not lut:
         with rasterio.open(bps_path) as src:
             arr = src.read(1)
@@ -178,8 +178,8 @@ def write_bps_symbology(bps_tif: Path, lut: BpsLookup) -> None:
     Write QGIS-compatible sidecar symbology files next to a BpS raster.
 
     Creates:
-        <stem>.clr  — ESRI colour file
-        <stem>.qml  — QGIS layer style (paletted unique-values)
+        <stem>.clr  - ESRI colour file
+        <stem>.qml  - QGIS layer style (paletted unique-values)
 
     Only codes actually present in the raster are included.
 
@@ -204,7 +204,7 @@ def write_bps_symbology(bps_tif: Path, lut: BpsLookup) -> None:
 
     stem = bps_tif.with_suffix("")  # e.g. /path/to/BpS
 
-    # ── .clr (ESRI colour file) ────────────────────────────────────────
+    # -- .clr (ESRI colour file) ----------------------------------------
     clr_lines = []
     for code in sorted(present_codes):
         if code in lut:
@@ -216,7 +216,7 @@ def write_bps_symbology(bps_tif: Path, lut: BpsLookup) -> None:
     clr_path = stem.with_suffix(".clr")
     clr_path.write_text("\n".join(clr_lines) + "\n", encoding="utf-8")
 
-    # ── .qml (QGIS style) ─────────────────────────────────────────────
+    # -- .qml (QGIS style) ---------------------------------------------
     qml_entries = []
     for code in sorted(present_codes):
         if code in lut:
@@ -254,7 +254,7 @@ def embed_bps_colortable_and_rat(bps_tif: Path, lut: BpsLookup) -> bool:
     """
     Embed a GDAL color table and Raster Attribute Table into a clipped
     BpS GeoTIFF so it auto-renders in QGIS/ArcGIS with LANDFIRE class
-    names and colours — exactly like the original CONUS source.
+    names and colours - exactly like the original CONUS source.
 
     rasterio's ``profile`` copy does NOT carry the color table or RAT
     across when a raster is clipped/reprojected, so we re-attach them
@@ -283,13 +283,13 @@ def embed_bps_colortable_and_rat(bps_tif: Path, lut: BpsLookup) -> bool:
 
     # Paletted rendering requires an integer band.  If the clip produced
     # a float raster (shouldn't happen with Resampling.nearest but just
-    # in case), bail out — the .qml sidecar is the best we can do.
+    # in case), bail out - the .qml sidecar is the best we can do.
     dt = gdal.GetDataTypeName(band.DataType)
     if dt not in ("Byte", "UInt16", "Int16", "UInt32", "Int32"):
         ds = None
         return False
 
-    # ── Color table ────────────────────────────────────────────────────
+    # -- Color table ----------------------------------------------------
     ct = gdal.ColorTable()
     # Start with a neutral default (prevents uninitialised entries from
     # showing up black).
@@ -301,7 +301,7 @@ def embed_bps_colortable_and_rat(bps_tif: Path, lut: BpsLookup) -> bool:
     band.SetColorTable(ct)
     band.SetColorInterpretation(gdal.GCI_PaletteIndex)
 
-    # ── Raster Attribute Table (RAT) ───────────────────────────────────
+    # -- Raster Attribute Table (RAT) -----------------------------------
     # Determine which codes are actually present so the RAT stays small.
     import numpy as _np
     arr = band.ReadAsArray()

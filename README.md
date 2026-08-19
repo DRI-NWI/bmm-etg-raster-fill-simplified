@@ -404,7 +404,7 @@ copy and never modifies your original shapefile.
 A self-contained smoke test exercises the whole pipeline on a small synthetic
 study area (no network or external data). It generates a BpS raster, an ETg
 raster with a simulated irrigation block, a boundary, and a treatment
-shapefile, runs `prep_custom_basin` → `etg_baseline_fill` → `etunit_summary` as
+shapefile, runs `prep_custom_basin` -> `etg_baseline_fill` -> `etunit_summary` as
 subprocesses in a temporary directory, and checks that the outputs exist, the
 irrigation signal is removed in the treatment zone without exceeding the
 original ETg, and the shipped code carries no machine-learning dependencies. A
@@ -446,7 +446,7 @@ One output does not land in `output/`: `flag_irrigated.py` writes
 
 | File | Description |
 |------|-------------|
-| `{key}_polygon_summary.csv` | Per-polygon statistics: pixel count, treatment type, mean input/baseline/final ETg |
+| `{key}_polygon_summary.csv` | Per-polygon statistics: `polygon_id`, pixel count, treatment type, `adj_factor`, and mean input / baseline / final ETg. Where the treatment shapefile carries `rplc_rt`, also `legacy_rplc_rt` and `baseline_minus_legacy` for reviewing the modeled rate against the hand-picked one |
 | `{key}_ETUNIT_SUMMARY.csv` | ET-unit-level summary: area (ac), volume (ac-ft), rate (ft/yr) with uncertainty |
 | `cross_basin_summary.csv` | (Project root) Cross-basin comparison after batch runs |
 

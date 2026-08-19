@@ -21,6 +21,7 @@ are not importable the geospatial tests skip rather than fail.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -50,9 +51,18 @@ import synth_data  # noqa: E402
 
 
 def _run(script: str, *args: str, cwd: Path) -> subprocess.CompletedProcess:
-    """Run a project script as a subprocess; fail loudly with captured output."""
+    """Run a project script as a subprocess; fail loudly with captured output.
+
+    stdout is forced to cp1252, the default on a US/Western-European Windows
+    install when output is redirected or captured.  Any non-ASCII character in
+    a printed string raises UnicodeEncodeError there, so running the scripts
+    this way reproduces that failure on Linux and macOS too.  Do not relax
+    this to UTF-8 to make a test pass; fix the offending string instead.
+    """
     cmd = [sys.executable, script, *args]
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                          encoding="cp1252", env=env)
     if proc.returncode != 0:
         raise AssertionError(
             f"{' '.join(cmd)} exited {proc.returncode}\n"
