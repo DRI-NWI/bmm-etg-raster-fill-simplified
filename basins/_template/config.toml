@@ -8,6 +8,8 @@
 # basins/_template/config.toml.  Edit it freely - the prep scripts NEVER
 # overwrite an existing config.toml.  To change defaults for NEW basins,
 # edit the template (basins/_template/config.toml) instead of this file.
+#
+# Plain-language explanation of every setting: basins/_template/CONFIG_GUIDE.md
 # =============================================================================
 
 [basin]

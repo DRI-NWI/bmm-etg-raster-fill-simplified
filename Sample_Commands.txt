@@ -1,4 +1,9 @@
-# Sample commands (Windows paths shown; adjust to your machine)
+# Sample commands
+#
+# Lines starting with # are notes, not commands. Copy one command line at a
+# time into the Anaconda Prompt (Windows) or Terminal (Mac). Every command is
+# typed the same way in both. Paths are shown in Windows form; on a Mac use
+# your own path, e.g. /Users/you/Downloads/LF2020_BPS_CONUS.tif
 
 # -- Setup check -----------------------------------------------------------
 conda env create -f environment.yml --solver=classic
@@ -41,16 +46,15 @@ python flag_irrigated.py 053_PineValley --mirror-to rplc_rt
 
 
 # -- Custom (non-NWI) study area -------------------------------------------
+# Each of these is one long line. If a path contains spaces, wrap it in
+# double quotes.
+#
 # If the ET-unit shapefile tiles the study area, let it define the boundary:
-python prep_custom_basin.py SierraValley ^
-    --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif ^
-    --treatment "C:\path\to\sierra_valley_etunits.shp"
+python prep_custom_basin.py SierraValley --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif --treatment "C:\path\to\sierra_valley_etunits.shp"
 
 # If it only covers the irrigated / phreatophyte ground, pass a real basin
 # outline instead, or the fill will have very little left to train on:
-python prep_custom_basin.py SierraValley ^
-    --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif ^
-    --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp"
+python prep_custom_basin.py SierraValley --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp"
 
 # Then drop the ETg raster (and the treatment shapefile, if you used
 # --boundary) into basins/SierraValley/source/, re-run the prep command to
@@ -59,8 +63,10 @@ python etg_baseline_fill.py SierraValley
 
 
 # -- Batch -----------------------------------------------------------------
-python run_all.py --list                       # readiness of every basin
-python run_all.py --dry-run                    # what would be processed
+# Readiness of every basin:
+python run_all.py --list
+# What would be processed:
+python run_all.py --dry-run
 python run_all.py 053_PineValley 042_MarysRiverArea
 python etg_baseline_fill.py --all --skip 053_PineValley
 python diagnostics.py --only 042_MarysRiverArea 073A_LovelockValley

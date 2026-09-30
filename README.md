@@ -132,13 +132,15 @@ project/
     basins/                     Per-basin directories (257 NWI basins)
         053_PineValley/
             config.toml         Per-basin configuration (auto-generated, editable)
-            source/             Raw ETg raster + treatment shapefile (you drop these in)
+            source/             Raw ETg raster + treatment shapefile (you drop these in;
+                                the Pine Valley pair ships with the repo for the cookbook)
             input/              Prep-generated BpS.tif (+ .clr / .qml symbology)
             output/             Fill results, diagnostics, logs
         _template/
             config.toml         Template used by prep scripts to generate each
                                 basin's config.toml.  Edit to change defaults.
                                 Tracked in git; prep fails without it.
+            CONFIG_GUIDE.md     Plain-language explanation of every setting
 
     prep_statewide.py       One-time: clip CONUS BpS to NWI extent
     prep_basin.py           Per-basin: clip BpS + generate config.toml (NWI)
@@ -174,7 +176,14 @@ install before trusting a basin you don't already know the answer for.
 
 ### 1. Install dependencies
 
-```bash
+> **Which window to type in.** On Windows, open the **Anaconda Prompt** (or
+> Miniforge Prompt) from the Start menu. On a Mac, open **Terminal**. Every
+> command in this guide is typed the same way in both. Type one line at a
+> time and press Enter. Example paths are shown in Windows form
+> (`C:\path\to\file.tif`); on a Mac, use your own path instead
+> (`/Users/you/Downloads/file.tif`).
+
+```
 conda env create -f environment.yml --solver=classic
 conda activate bmm-etg-raster-fill
 ```
@@ -195,8 +204,8 @@ propagates into every log and figure.
 
 Clip the CONUS-wide LANDFIRE BpS raster to the NWI investigation extent:
 
-```bash
-python prep_statewide.py --bps /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_statewide.py --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 This writes `statewide/BpS_statewide.tif` (reprojected to the NWI shapefile CRS,
@@ -204,14 +213,21 @@ EPSG:32611) and `statewide/bps_lookup.json` (class names and colours).
 
 ### 3. Set up basin directories
 
-```bash
-# List all 257 basin keys from the NWI shapefile:
+List all 257 basin keys from the NWI shapefile:
+
+```
 python prep_basin.py --list
+```
 
-# Prep a single basin (clips BpS, generates config.toml):
+Prep a single basin (clips BpS, generates `config.toml`):
+
+```
 python prep_basin.py 053_PineValley
+```
 
-# Prep all basins at once:
+Or prep all basins at once:
+
+```
 python prep_basin.py --all
 ```
 
@@ -222,7 +238,10 @@ shapefile into its `basins/<basin_key>/source/` directory and review the generat
 
 ### 4. Configure per-basin parameters
 
-Each basin gets a `config.toml` with sensible defaults. Edit as needed:
+Each basin gets a `config.toml` with sensible defaults. Every setting is
+explained in plain language in
+[basins/_template/CONFIG_GUIDE.md](basins/_template/CONFIG_GUIDE.md). The ones
+most often changed:
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
@@ -237,19 +256,25 @@ Each basin gets a `config.toml` with sensible defaults. Edit as needed:
 
 ### 5. Run
 
-```bash
-# Single basin:
+Single basin:
+
+```
 python etg_baseline_fill.py 053_PineValley
 python diagnostics.py 053_PineValley
 python etunit_summary.py 053_PineValley
+```
 
-# All configured basins (prep + fill + diagnostics + summary):
+All configured basins (prep + fill + diagnostics + summary):
+
+```
 python run_all.py
+```
 
-# Dry run -- show what would be processed:
+To see what would be processed without running it, or to check readiness of
+all basins:
+
+```
 python run_all.py --dry-run
-
-# Check readiness of all basins:
 python run_all.py --list
 ```
 
@@ -282,10 +307,8 @@ Script-specific flags:
 For basins outside the Nevada NWI framework (e.g. Sierra Valley CA, or basins in
 other states), use `prep_custom_basin.py`:
 
-```bash
-python prep_custom_basin.py SierraValley \
-    --boundary  /path/to/sierra_valley_boundary.shp \
-    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_custom_basin.py SierraValley --boundary C:\path\to\sierra_valley_boundary.shp --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 This clips BpS to the boundary, copies the boundary into `source/boundary.shp`, and
@@ -303,10 +326,8 @@ the buffered treatment zones, and very little is left to train on. The fill warn
 when the derived boundary covers less than 25% of the valid ETg extent; if you
 see that warning, supply `--boundary` instead.
 
-```bash
-python prep_custom_basin.py SierraValley \
-    --treatment /path/to/sierra_valley_etunits.shp \
-    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_custom_basin.py SierraValley --treatment C:\path\to\sierra_valley_etunits.shp --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 This clips BpS to the treatment shapefile's extent, copies it into `source/`, and
@@ -342,7 +363,7 @@ The min-excess guard prevents flagging trivial differences in low-ET classes.
 Thresholds live in the `[flag]` section of `config.toml` and can be overridden
 on the command line.
 
-```bash
+```
 python flag_irrigated.py 053_PineValley
 python flag_irrigated.py 053_PineValley --ratio 1.4 --min-excess 0.25
 python flag_irrigated.py --all
@@ -411,7 +432,7 @@ companion test covers `flag_irrigated.py`: it confirms the inflated block is
 auto-flagged, natural polygons are not, and an analyst override survives a
 re-run.
 
-```bash
+```
 pytest -q
 ```
 
@@ -554,6 +575,7 @@ phreatophyte vegetation, Humboldt River Basin, Nevada: Desert Research Institute
 Publication No. 41288,
 [project page](https://www.dri.edu/project/humboldt-etg/).
 
-Huntington, J.L. and Bromley, M., 2023, Remote sensing of evapotranspiration at the
-NERT site and surrounding properties: prepared for Nevada Division of Environmental
-Protection.
+Bromley, M., Minor, B.A., Russell, C.E., Huntington, J.L., and Carrara, K.O., 2023,
+Remote sensing of evapotranspiration at the Nevada Environmental Response Trust site
+and nearby properties: Desert Research Institute, Division of Hydrologic Sciences,
+Publication No. 41296.

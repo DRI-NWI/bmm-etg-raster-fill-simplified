@@ -15,7 +15,14 @@ step: the only covariate you prepare is BpS.
 
 ## 1. Set up the environment
 
-```bash
+> **Which window to type in.** On Windows, open the **Anaconda Prompt** (or
+> Miniforge Prompt) from the Start menu. On a Mac, open **Terminal**. Every
+> command in this guide is typed the same way in both. Type one line at a
+> time and press Enter. Example paths are shown in Windows form
+> (`C:\path\to\file.tif`); on a Mac, use your own path instead
+> (`/Users/you/Downloads/file.tif`).
+
+```
 conda env create -f environment.yml --solver=classic
 conda activate bmm-etg-raster-fill
 ```
@@ -26,7 +33,7 @@ You need one input dataset to get started: the CONUS LANDFIRE BpS raster
 Check that the `gdal` Python bindings came through, because `rasterio` alone
 does not provide them and they are what read the LANDFIRE class names:
 
-```bash
+```
 python -c "from osgeo import gdal; print(gdal.__version__)"
 ```
 
@@ -41,8 +48,8 @@ as `BpS 1073` with a grey palette, and everything downstream inherits that.
 Clip the CONUS BpS raster to the NWI investigation extent. This is the only
 one-time prep step.
 
-```bash
-python prep_statewide.py --bps /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_statewide.py --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 Outputs, written to `statewide/`:
@@ -57,7 +64,7 @@ Skip this step entirely if you only ever run custom (non-NWI) basins; in that ca
 
 ## 3. Find your basin key
 
-```bash
+```
 python prep_basin.py --list
 ```
 
@@ -66,7 +73,7 @@ This prints all 257 NWI basin keys (e.g. `053_PineValley`) with their names.
 
 ## 4. Prep the basin
 
-```bash
+```
 python prep_basin.py 053_PineValley
 ```
 
@@ -122,7 +129,7 @@ ETg value per BpS class across the whole basin.
 
 ## 7. Run the fill
 
-```bash
+```
 python etg_baseline_fill.py 053_PineValley
 ```
 
@@ -144,7 +151,7 @@ Outputs land in `basins/053_PineValley/output/`. The two you'll use most are
 
 ## 8. Run diagnostics and summary
 
-```bash
+```
 python diagnostics.py 053_PineValley
 python etunit_summary.py 053_PineValley
 ```
@@ -205,7 +212,7 @@ If you'd rather not hand-pick every treatment polygon, run the pre-screening
 helper after prep (it needs the ETg raster, BpS, and the treatment shapefile in
 place):
 
-```bash
+```
 python flag_irrigated.py 053_PineValley
 ```
 
@@ -244,15 +251,22 @@ leaves your original shapefile untouched. Then run the fill as usual.
 
 Once several basins are prepped and have their data in place:
 
-```bash
-# Prep + fill + diagnostics + summary for every configured basin:
-python run_all.py
+Prep + fill + diagnostics + summary for every configured basin:
 
-# Check what's ready first:
+```
+python run_all.py
+```
+
+To check what's ready first:
+
+```
 python run_all.py --list
 python run_all.py --dry-run
+```
 
-# Just specific basins:
+Just specific basins:
+
+```
 python run_all.py 053_PineValley 042_MarysRiverArea
 ```
 
@@ -279,10 +293,8 @@ area - no separate boundary needed. Confirm that it really does tile the basin
 rather than covering only the phreatophyte and irrigated ground; if it is the
 latter, the fill has almost nothing left to train on and will say so:
 
-```bash
-python prep_custom_basin.py SierraValley \
-    --treatment /path/to/sierra_valley_etunits.shp \
-    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_custom_basin.py SierraValley --treatment C:\path\to\sierra_valley_etunits.shp --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 This clips BpS to the treatment shapefile's extent, copies it into `source/`, and
@@ -292,10 +304,8 @@ training boundary from the treatment shapefile.
 If you do have a distinct basin outline (e.g. the treatment shapefile is only the
 irrigated fields), pass it as `--boundary` instead:
 
-```bash
-python prep_custom_basin.py SierraValley \
-    --boundary  /path/to/sierra_valley_boundary.shp \
-    --bps       /path/to/LF2020_BPS_CONUS.tif
+```
+python prep_custom_basin.py SierraValley --boundary C:\path\to\sierra_valley_boundary.shp --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
 Either way the script auto-detects a UTM zone if the input is in a geographic CRS.
@@ -305,7 +315,7 @@ Either way the script auto-detects a UTM zone if the input is in a geographic CR
 Drop your ETg raster into `basins/SierraValley/source/` (and the treatment
 shapefile too, if you used `--boundary`), review `config.toml`, then:
 
-```bash
+```
 python etg_baseline_fill.py SierraValley
 python diagnostics.py SierraValley
 python etunit_summary.py SierraValley

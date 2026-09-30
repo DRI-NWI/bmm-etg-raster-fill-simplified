@@ -19,11 +19,11 @@ what counts as a match.
 |---|---|
 | The repo | `git clone` |
 | `LF2020_BPS_CONUS.tif` | https://landfire.gov, LANDFIRE 2020 Biophysical Settings, CONUS |
-| `HA053_..._etg_adj_long_term_median_ft_1984_2025.tif` | Project deliverable. The BMM ETg raster for HA 053, ft/yr, 30 m, EPSG:32611 |
-| `NV_phreats_MASTER_v11_PineValley_053_w_ag.shp` | Project deliverable. ET-unit polygons with `scale_fctr` and `rplc_rt` columns |
+| `HA053_..._etg_adj_long_term_median_ft_1984_2025.tif` | Ships with the repo in `basins/053_PineValley/source/`. The BMM ETg raster for HA 053, ft/yr, 30 m, EPSG:32611 |
+| `NV_phreats_MASTER_v11_PineValley_053_w_ag.shp` | Ships with the repo in the same folder. ET-unit polygons with `scale_fctr` and `rplc_rt` columns |
 
-The last two are not in the repo and are not downloadable. Get them from the
-NWI project data share.
+The LANDFIRE raster is the only download. The Pine Valley data is in the repo
+so the cookbook runs straight after cloning.
 
 The one-time CONUS clip in step 1 is the slow part: a few minutes, and the
 LANDFIRE download is a couple of GB. It leaves a 96 MB `statewide/` folder.
@@ -32,10 +32,16 @@ Pine Valley itself then takes under a minute and 6 MB.
 
 ## Step 0. Environment check
 
-```bash
+> **Which window to type in.** On Windows, open the **Anaconda Prompt** (or
+> Miniforge Prompt) from the Start menu. On a Mac, open **Terminal**. Every
+> command in this guide is typed the same way in both. Type one line at a
+> time and press Enter. Example paths are shown in Windows form
+> (`C:\path\to\file.tif`); on a Mac, use your own path instead
+> (`/Users/you/Downloads/file.tif`).
+
+```
 conda env create -f environment.yml --solver=classic
 conda activate bmm-etg-raster-fill
-
 python -c "from osgeo import gdal; print(gdal.__version__)"
 pytest -q
 ```
@@ -70,7 +76,7 @@ the cached `bps_lookup.json` and works fine without gdal.
 
 ## Step 1. Statewide BpS (one time for all basins)
 
-```bash
+```
 python prep_statewide.py --bps C:\path\to\LF2020_BPS_CONUS.tif
 ```
 
@@ -106,7 +112,7 @@ Fix step 0 and re-run with the file deleted.
 
 Find the key first if you don't know it:
 
-```bash
+```
 python prep_basin.py --list
 ```
 
@@ -121,7 +127,7 @@ python prep_basin.py --list
 
 Then:
 
-```bash
+```
 python prep_basin.py 053_PineValley
 ```
 
@@ -135,6 +141,9 @@ python prep_basin.py 053_PineValley
     ...\basins\053_PineValley\source\
 ```
 
+Ignore that last line for Pine Valley: the two files are already in `source/`
+because they ship with the repo, and prep found them.
+
 **Checkpoint.** You now have:
 
 ```
@@ -142,26 +151,37 @@ basins/053_PineValley/
     config.toml
     input/          BpS.clr  BpS.qml  BpS.tif    (1.6 MB)
     output/         (empty)
-    source/         (empty)
+    source/         HA053_..._etg_adj_long_term_median_ft_1984_2025.tif
+                    NV_phreats_MASTER_v11_PineValley_053_w_ag.shp  (+ .shx .dbf .prj .cpg)
 ```
 
-`config.toml` still carries two placeholders at this point. That is expected.
+and `basins/053_PineValley/config.toml` reads:
 
-
-## Step 3. Place the data, then re-run prep
-
-Copy both files, including every shapefile sidecar (`.shx`, `.dbf`, `.prj`,
-`.cpg`), into `basins\053_PineValley\source\`:
-
-```
-HA053_NV_phreats_MASTER_v11_PineValley_053_w_ag_etg_adj_long_term_median_ft_1984_2025.tif
-NV_phreats_MASTER_v11_PineValley_053_w_ag.shp   (+ .shx .dbf .prj .cpg)
+```toml
+[source]
+etg_tif       = "HA053_NV_phreats_MASTER_v11_PineValley_053_w_ag_etg_adj_long_term_median_ft_1984_2025.tif"
+treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag.shp"
 ```
 
-Then run the exact same prep command again:
+If either says `# PLACE ...` instead, the `source/` folder did not come through
+the clone. Check that `.gitignore` was not edited and that the six files listed
+above are present.
 
-```bash
-python prep_basin.py 053_PineValley
+
+## Step 3. Placing your own data (skip for Pine Valley)
+
+This is what Step 2 looks like for a basin whose data does not ship with the
+repo. Read it now so the two-pass flow makes sense later; nothing to do for the
+reference run.
+
+The first `prep_basin.py` run on an empty basin writes `config.toml` with two
+placeholders, `# PLACE ETg RASTER HERE` and `# PLACE TREATMENT SHP HERE`. Copy
+the ETg raster and the treatment shapefile, including every sidecar (`.shx`,
+`.dbf`, `.prj`, `.cpg`), into `basins\<basin_key>\source\`, then run the
+exact same prep command again:
+
+```
+python prep_basin.py <basin_key>
 ```
 
 ```
@@ -172,19 +192,11 @@ python prep_basin.py 053_PineValley
 That second line is the point of re-running. It fills the two placeholders and
 leaves every other value alone.
 
-**Checkpoint.** `basins/053_PineValley/config.toml` now reads:
-
-```toml
-[source]
-etg_tif       = "HA053_NV_phreats_MASTER_v11_PineValley_053_w_ag_etg_adj_long_term_median_ft_1984_2025.tif"
-treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag.shp"
-```
-
-If either still says `# PLACE ...`, the file is not where prep looked, or its
-name does not match the patterns prep searches for (`*etg*median*.tif` /
-`*ETg*.tif` for the raster; a stem containing `etunit`, `et_unit`, `phreats`,
-`treatment`, `w_ag`, or `master` for the shapefile). Type the filename in by
-hand.
+If either placeholder is still there afterward, the file is not where prep
+looked, or its name does not match the patterns prep searches for
+(`*etg*median*.tif` / `*ETg*.tif` for the raster; a stem containing `etunit`,
+`et_unit`, `phreats`, `treatment`, `w_ag`, or `master` for the shapefile). Type
+the filename in by hand.
 
 
 ## Step 4. Check the config
@@ -209,9 +221,99 @@ before you touch it: 33 px is about 1 km at 30 m, and 0 gives a single flat
 ETg value per BpS class across the whole basin.
 
 
+## Step 4b (optional). Auto-flag the polygons that need treatment
+
+The Pine Valley shapefile already has `scale_fctr` and `rplc_rt` filled in by
+an analyst, so for the reference run **skip this step** and go to Step 5. Come
+back to it when you have a basin where nobody has picked the polygons yet, or
+you want a machine first pass to check the hand-picked set against.
+
+`flag_irrigated.py` compares each polygon's mean ETg against what its BpS
+classes would produce without irrigation, and flags the ones that stand out.
+The rule, from `[flag]` in `config.toml`: mean ETg at least 1.5x the class
+baseline **and** at least 0.3 ft/yr above it.
+
+```
+python flag_irrigated.py 053_PineValley
+```
+
+Abridged; the per-BpS-class table between the CSV writes and the summary is
+dropped here:
+
+```
+[18:04:36] === Auto-flag: 053_PineValley ===
+[18:04:36]     rule: mean ETg >= 1.5x baseline AND >= 0.3 ft/yr above it; baseline = per-BpS p50 over in-basin pixels
+[18:04:36]     basin boundary pixels (NWI): 2,138,982
+[18:04:36]     valid in-basin pixels: 213,425   BpS classes: 15   global baseline p50: 0.546 ft
+[18:04:38]   -> wrote NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp  (152 polygons)
+[18:04:38]   -> wrote 053_PineValley_autoflag_report.csv
+[18:04:38]   -> wrote 053_PineValley_autoflag_class_summary.csv
+...
+[18:04:38]   polygons total          : 152
+[18:04:38]   auto-detected (new)     : 8
+[18:04:38]   carried existing manual : 100
+[18:04:38]   analyst overrides kept  : 0
+[18:04:38]   FLAGGED for treatment   : 108  (autoflag = 1)
+[18:04:38]   WARNING: BpS 11 (Open Water) has 86% of its in-basin area inside flagged polygons - its p50
+           baseline may be irrigation-inflated and cause under-flagging.
+[18:04:38]   WARNING: BpS 1074 (Inter-Mountain Basins Montane Riparian Systems) has 57% ...
+```
+
+**Checkpoint.** A new shapefile,
+`NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp`, sits in `source/`
+next to your original, which is untouched. The two CSVs are in `output/`. On
+Pine Valley the flagger carries the 100 existing manual picks and adds 8 more.
+
+Both warnings are expected on Pine Valley. When most of a class sits inside
+flagged polygons, its median is pulled up by the irrigated pixels, so the
+screen is comparing against an inflated baseline and under-flags that class.
+If you care about riparian specifically, re-run with `--pctl 35 --reset`.
+
+**Review the flags.** Open the `_autoflag.shp` copy in QGIS. The `autoflag`
+column is the decision (1 = treat, 0 = leave); `autoflag_a` is the raw machine
+suggestion and the per-polygon diagnostics explain why. Set `autoflag` to 0 or
+1 where you disagree and re-run the command above. Your edits stick, because
+the script compares `autoflag` against `autoflag_a` to find them. Pass
+`--reset` to throw them away and start over.
+
+**Point the fill at the flags.** Nothing uses the copy until you tell the fill
+about it. Edit `config.toml`:
+
+```toml
+[source]
+treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp"
+
+[treatment]
+attr_replace = "autoflag"
+```
+
+Or run `python flag_irrigated.py 053_PineValley --mirror-to rplc_rt`, which
+copies the decision into the standard `rplc_rt` trigger column so you only need
+the `treatment_shp` line. Either way, `treatment_shp` must point at the
+`_autoflag.shp` copy.
+
+Two things to keep straight:
+
+- Keep `treatment_shp` on your **original** while you are still iterating on
+  flags. If it points at the copy and you re-run the flagger, you get
+  `..._autoflag_autoflag.shp` and the edit-tracking looks in the wrong place.
+  Switch to the copy only when you are ready to run the fill.
+- Flagging decides **which** polygons are filled. It does not decide the fill
+  value. Rate tuning happens after the fill, in
+  `053_PineValley_rates_adjust.shp` (see [Adjusting and scaling the ETg
+  rates](#adjusting-and-scaling-the-etg-rates)).
+
+The copy is also seeded with a `UniqueID` column if your source lacks one, so
+summary rows trace back to features.
+
+If you ran this step on Pine Valley and pointed the fill at the flags, the
+reference numbers in Step 5 onward will not match, because 8 extra polygons are
+treated. Put `treatment_shp` back on the original for the reference run.
+
+
 ## Step 5. Run the fill
 
-```bash
+```
 python etg_baseline_fill.py 053_PineValley
 ```
 
@@ -287,7 +389,7 @@ later, at step 1:
 [17:53:08]   Total ETg volume change vs original input: -18.80%  (over 213,442 pixels valid in both rasters)
 [17:53:08]   Treatment-zone ETg volume change:       -43.40%  (over 47,614 treatment pixels)
 [17:53:08]   Elapsed: 11.1 s
-[17:53:08] Done.  Outputs in:  /home/claude/repo/basins/053_PineValley/output
+[17:53:08] Done.  Outputs in:  ...\basins\053_PineValley\output
 ```
 
 **Read this, don't just watch it scroll.** Four things tell you the run is sane:
@@ -317,7 +419,7 @@ files), `053_PineValley_polygon_summary.csv`, `053_PineValley_run.log`,
 
 ## Step 6. Diagnostics
 
-```bash
+```
 python diagnostics.py 053_PineValley
 ```
 
@@ -354,7 +456,7 @@ Seven PNGs. The eighth in the folder,
 
 ## Step 7. ET unit summary
 
-```bash
+```
 python etunit_summary.py 053_PineValley
 ```
 
@@ -586,7 +688,7 @@ need a hard boundary.
 
 You can also drive treatment off a different column entirely, with
 `[treatment] attr_scale` and `attr_replace`. That is what the optional
-auto-flag workflow below uses.
+auto-flag step (Step 4b) uses.
 
 ### When the problem is the model, not one polygon
 
@@ -613,83 +715,6 @@ and `spatial_weight_radius_px`, so a run is self-documenting as to *what* was
 set. It cannot record *why*. Put that in a note in the basin folder or a commit
 message. It is the difference between a defensible number and an unexplained
 one.
-
-
-## Optional. Auto-flag instead of hand-picking polygons
-
-Use this only when you do not already have `scale_fctr` / `rplc_rt` filled in
-and want a first pass to react to rather than a blank slate. If an analyst has
-already set those columns, skip this section: you never need it, and skipping
-it means there is only ever one shapefile in play.
-
-**This is the step that creates a second shapefile.** It writes a copy,
-`<your treatment shapefile>_autoflag.shp`, into the same `source/` folder,
-leaving your original untouched. Two things follow from that:
-
-- Nothing uses the copy until you point `[source] treatment_shp` at it.
-- Keep `treatment_shp` on your **original** while you are iterating on flags.
-  If you point it at the copy and re-run the flagger, you get
-  `..._autoflag_autoflag.shp` and the sticky-override logic looks in the wrong
-  place. Switch `treatment_shp` to the copy only when you run the fill.
-
-The copy is also seeded with a `UniqueID` column if your source lacks one, so
-summary rows trace back to features. Rate tuning is not done here: that
-happens in `053_PineValley_rates_adjust.shp` (Option B above), regardless of
-whether you use the auto-flagger.
-
-```bash
-python flag_irrigated.py 053_PineValley
-```
-
-Abridged; the per-BpS-class table between the CSV writes and the summary is
-dropped here:
-
-```
-[18:04:36] === Auto-flag: 053_PineValley ===
-[18:04:36]     rule: mean ETg >= 1.5x baseline AND >= 0.3 ft/yr above it; baseline = per-BpS p50 over in-basin pixels
-[18:04:36]     basin boundary pixels (NWI): 2,138,982
-[18:04:36]     valid in-basin pixels: 213,425   BpS classes: 15   global baseline p50: 0.546 ft
-[18:04:38]   -> wrote NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp  (152 polygons)
-[18:04:38]   -> wrote 053_PineValley_autoflag_report.csv
-[18:04:38]   -> wrote 053_PineValley_autoflag_class_summary.csv
-...
-[18:04:38]   polygons total          : 152
-[18:04:38]   auto-detected (new)     : 8
-[18:04:38]   carried existing manual : 100
-[18:04:38]   analyst overrides kept  : 0
-[18:04:38]   FLAGGED for treatment   : 108  (autoflag = 1)
-[18:04:38]   WARNING: BpS 11 (Open Water) has 86% of its in-basin area inside flagged polygons - its p50
-           baseline may be irrigation-inflated and cause under-flagging.
-[18:04:38]   WARNING: BpS 1074 (Inter-Mountain Basins Montane Riparian Systems) has 57% ...
-```
-
-Note where things land: the shapefile goes to **`source/`**, next to the
-original. The two CSVs go to `output/`.
-
-Both warnings are expected on Pine Valley and are worth understanding. When
-most of a class sits inside flagged polygons, its median is pulled up by the
-irrigated pixels, so the screen is comparing against an inflated baseline and
-under-flags that class. If you care about riparian specifically, re-run with
-`--pctl 35 --reset`.
-
-Review the `autoflag` column in QGIS, set it to 0 or 1 where you disagree, and
-re-run. Your edits stick, because the script tracks its own raw suggestion
-separately in `autoflag_a`.
-
-To run the fill on the flags, either set in `config.toml`:
-
-```toml
-[source]
-treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp"
-
-[treatment]
-attr_replace = "autoflag"
-```
-
-or re-run with `--mirror-to rplc_rt`, which copies the decision into the
-standard trigger column so you only need the `treatment_shp` line, not the
-`attr_replace` one. Either way you must point `treatment_shp` at the
-`_autoflag.shp` copy: the script never modifies your original shapefile.
 
 
 ## Reference numbers
@@ -743,12 +768,29 @@ change, means something is actually wrong: work through the table below.
 
 ## Doing this for another basin
 
-Everything above except step 1, with the key swapped:
+Everything above except step 1, with the key swapped. This time the data does
+not ship with the repo, so prep runs twice (Step 3):
 
-```bash
+```
 python prep_basin.py 042_MarysRiverArea
-# drop the two files into basins/042_MarysRiverArea/source/
+```
+
+Drop the two files into `basins/042_MarysRiverArea/source/`, then:
+
+```
 python prep_basin.py 042_MarysRiverArea
+```
+
+If nobody has filled in `scale_fctr` / `rplc_rt` for this basin yet, this is
+where Step 4b earns its keep:
+
+```
+python flag_irrigated.py 042_MarysRiverArea
+```
+
+Review the flags, point `treatment_shp` at the `_autoflag.shp` copy, then:
+
+```
 python etg_baseline_fill.py 042_MarysRiverArea
 python diagnostics.py 042_MarysRiverArea
 python etunit_summary.py 042_MarysRiverArea
