@@ -2,6 +2,78 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.0] - 2026-10-07
+
+### Added
+
+- **Three treatment modes.**  A polygon's fill is now chosen by column, in
+  this order of precedence (names configurable in `[treatment]`):
+  - `fixed_rt` (`attr_fixed`): the value is burned in as-is, ft/yr.  No
+    model, no adjustment factor, no downward-only cap, no buffer and no
+    feather band around it.  For open water and other hand-assigned rates
+    that the BpS baseline cannot reproduce (a lake in a shrubland class
+    came out near 0 before).
+  - `bsnAv_flag` (`attr_basin_avg`): every pixel gets the mean of the
+    training set, the legacy BMM "basin average" replacement.  Buffer,
+    adjustment, cap and feathering apply as for a baseline fill.  These
+    polygons were silently ignored before.
+  - any column in `attr_treat` (default `["scale_fctr", "rplc_rt"]`): the
+    modeled BpS baseline, unchanged behaviour.
+- `fixed_rt` round-trips through `{key}_rates_adjust.shp` exactly like
+  `adj_fctr`: the column is pre-seeded, edit it in QGIS and re-run.  A
+  `fixed_rt` column in the treatment shapefile wins over the rates file.
+- `{key}_polygon_summary.csv` gains `trigger` (which column selected the
+  polygon) and `fixed_rate`; `{key}_rates_adjust.shp` gains `mode`,
+  `trigger` and `fixed_rt`.  Run metadata lists the three column names and
+  the polygon count per mode.
+- `tests/test_treatment_modes.py` (7 tests) and `modes=True` in
+  `tests/synth_data.py`.
+- **`flag_irrigated.py`: an explicit `analyst` column** replaces the
+  inferred-override scheme.  The output now carries `suggested` (the
+  thresholds' call, recomputed every run), `analyst` (-1 = go with the
+  suggestion, 0 = leave, 1 = treat; the only column to edit, carried over
+  run to run) and `autoflag` (the result, recomputed every run; still what
+  the fill triggers on).  `autoflag_a` is gone.  Nothing is inferred from
+  `autoflag` any more; an `autoflag` edited by hand is moved into `analyst`
+  with a note.  A pre-1.1.0 `_autoflag.shp` is migrated on first run (its
+  overrides land in `analyst`).  `--reset` now simply clears `analyst`.
+  The report CSV's `source` column reads `suggested` / `manual_flag` /
+  `analyst`.
+
+### Changed
+
+- `[treatment] attr_treat` (a list) replaces `attr_scale` / `attr_replace`.
+  Configs with only the two old keys keep working; the list is built from
+  them.  To fill on `flag_irrigated.py` output, add `"autoflag"` to the list.
+- The `treatment` column of the polygon summary says `baseline` where it
+  used to say `replaced`, alongside the new `basin_avg` and `fixed`.
+- Only one of the `attr_treat` columns has to exist in the shapefile; a
+  missing one is noted in the log.  None present is still an error (which
+  keeps a `rates_adjust.shp` passed as `treatment_shp` failing loudly).
+- `flag_irrigated.py` counts `bsnAv_flag` / `fixed_rt` polygons as already
+  manually flagged.
+
+## [1.0.6] - 2026-10-06
+
+### Added
+
+- **`--treatment-src`** on `prep_basin.py` and `prep_custom_basin.py`: cut a
+  basin's polygons out of a statewide treatment dataset into
+  `source/<basin_key>_treatment.shp`, and point a new `config.toml` at it.
+  Polygons overlapping the basin outline (NWI polygon, or `--boundary`) are
+  kept whole; edge-only neighbours are dropped; a `src_fid` column records
+  each polygon's row in the source file.  The subset is rebuilt when the
+  source is newer, or with `--force`.  An existing `config.toml` naming a
+  different `treatment_shp` is left alone and prep prints the line to set.
+  In `prep_custom_basin.py` it requires `--boundary` and cannot be combined
+  with `--treatment`.  With `prep_basin.py --all`, a basin with no
+  overlapping polygons logs a warning and the batch continues.
+- **`treatment_subset.py`**: the shared helper, also runnable on its own.
+- `etg_baseline_fill.py` warns in step 2 when more than half the treatment
+  polygons fall outside the ETg raster (a statewide file pointed at
+  directly).  Results were already correct; the warning is about run time.
+- `tests/test_treatment_subset.py` (6 tests).
+
 ## [1.0.5] - 2026-08-19
 
 ### Added

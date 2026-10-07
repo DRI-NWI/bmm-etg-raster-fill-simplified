@@ -106,15 +106,27 @@ steps.
 
 ### Treatment handling
 
-Any polygon in the treatment shapefile with `scale_fctr > 0` or `rplc_rt > 0` is
-treated: its pixels are fully replaced with the modeled baseline. Polygons where both
-attributes are zero are left untouched.
+A polygon in the treatment shapefile is treated when any of these columns holds a
+value above 0. Column names are set in `config.toml` (defaults shown). Where more
+than one applies, the first wins:
 
-All treatment polygons are buffered outward (configurable, default 90 m) to exclude
-irrigation edge effects from both the training data and the replacement zone. The
-replacement is never allowed to exceed the original input ETg (a downward-only cap).
-Gaussian feathering applies *outside* the treatment boundary, blending the baseline
-values smoothly into the surrounding raw ETg landscape.
+| Column | Fill | Buffer, cap, feather |
+|---|---|---|
+| `fixed_rt` | That value, burned in as-is (ft/yr). No model. | None. Hard edge. |
+| `bsnAv_flag` | The basin-wide mean of the training pixels (the legacy BMM "basin average"). | Yes |
+| `scale_fctr`, `rplc_rt` (the `attr_treat` list) | The modeled BpS baseline. | Yes |
+
+`fixed_rt` is for hand-assigned rates such as open water at 4 ft/yr, which the model
+would otherwise pull down to the baseline of whatever BpS class the lake sits in.
+`bsnAv_flag` is a blunt replacement with no modeling, kept for compatibility with the
+legacy workflow. Polygons with zeros in every column are left untouched.
+
+Baseline and basin-average polygons are buffered outward (configurable, default 90 m)
+to exclude irrigation edge effects from both the training data and the replacement
+zone. Their replacement is never allowed to exceed the original input ETg (a
+downward-only cap), and Gaussian feathering applies *outside* the treatment boundary,
+blending the values smoothly into the surrounding raw ETg landscape. Fixed-rate
+polygons get none of that: the analyst's number stands, inside the polygon only.
 
 
 ## Repository structure
@@ -146,6 +158,7 @@ project/
     prep_basin.py           Per-basin: clip BpS + generate config.toml (NWI)
     prep_custom_basin.py    Set up a basin from any boundary shapefile (non-NWI)
     prep_humboldt.py        Stage the Humboldt 2022 dataset into basin dirs
+    treatment_subset.py     Cut one basin's polygons out of a statewide treatment dataset
     basin_config.py         TOML config reader (per-basin config interface)
     bps_utils.py            BpS class-name / colour (RAT) and symbology utilities
     etg_baseline_fill.py    Main workflow (training, prediction, fill, feathering)
@@ -236,6 +249,33 @@ python prep_basin.py --all
 shapefile into its `basins/<basin_key>/source/` directory and review the generated
 `config.toml`.
 
+#### Starting from a statewide treatment dataset
+
+If the phreatophyte + ag polygons live in one statewide file, let prep cut each
+basin's share out of it instead of copying the whole file into every basin:
+
+```
+python prep_basin.py 053_PineValley --treatment-src C:\path\to\NV_phreats_statewide.shp
+python prep_basin.py --all --treatment-src C:\path\to\NV_phreats_statewide.shp
+```
+
+For each basin this writes `source/<basin_key>_treatment.shp` and sets
+`treatment_shp` in a new `config.toml` to it. Selection rules:
+
+- A polygon is kept when it overlaps the NWI basin outline. Polygons that only
+  share an edge with it are dropped.
+- Kept polygons stay whole (not clipped at the basin line), so their attributes
+  and areas match the statewide file. The fill only uses the part on the ETg grid.
+- A `src_fid` column holds each polygon's row number in the statewide file, so
+  edits can be joined back.
+- The subset is rebuilt when the statewide file is newer than it, or with `--force`.
+- An existing `config.toml` that already names a different `treatment_shp` is not
+  changed; prep prints the line to set instead.
+
+The fill still runs if `treatment_shp` points straight at a statewide file (polygons
+off the ETg grid burn nothing), but the per-polygon summary loops over every
+polygon in it, and it warns when more than half fall off the grid.
+
 ### 4. Configure per-basin parameters
 
 Each basin gets a `config.toml` with sensible defaults. Every setting is
@@ -295,8 +335,9 @@ Script-specific flags:
 
 | Flag | Script | Purpose |
 |------|--------|---------|
-| `--force` | `prep_basin`, `prep_custom_basin` | Re-clip `BpS.tif` even if it exists |
-| `--only-missing` | `prep_basin --all` | Skip basins that already have `BpS.tif` |
+| `--force` | `prep_basin`, `prep_custom_basin` | Re-clip `BpS.tif` and rebuild the treatment subset even if they exist |
+| `--treatment-src` | `prep_basin`, `prep_custom_basin` | Statewide treatment dataset to subset into `source/<basin_key>_treatment.shp` |
+| `--only-missing` | `prep_basin --all` | Skip basins that already have `BpS.tif` (and, with `--treatment-src`, a subset) |
 | `--buffer-m` | `prep_statewide` (10000), `prep_custom_basin` (5000) | Clip buffer in metres |
 | `--prep-only`, `--skip-prep`, `--skip-diag`, `--skip-summary` | `run_all` | Run part of the four-step pipeline |
 | `--dry-run` | `run_all`, `prep_humboldt` | Show what would happen, write nothing |
@@ -333,6 +374,14 @@ python prep_custom_basin.py SierraValley --treatment C:\path\to\sierra_valley_et
 This clips BpS to the treatment shapefile's extent, copies it into `source/`, and
 generates a `config.toml` with `boundary_shp` left commented out. Drop your ETg
 raster into `source/` and run the fill.
+
+Do not pass a statewide file as `--treatment`: its extent would become the clip
+area and the training boundary. Pass it as `--treatment-src` together with
+`--boundary`, and only the polygons overlapping the boundary are staged:
+
+```
+python prep_custom_basin.py SierraValley --boundary C:\path\to\sierra_valley_boundary.shp --treatment-src C:\path\to\statewide_etunits.shp --bps C:\path\to\LF2020_BPS_CONUS.tif
+```
 
 The resulting basin directory is identical in structure to an NWI basin, and all
 downstream scripts work the same way.
@@ -375,8 +424,9 @@ original, not in `output/`). It keeps every original attribute and adds:
 
 | Attribute | Meaning |
 |-----------|---------|
-| `autoflag` | The actionable decision (1 = treat, 0 = leave). **Edit this to override.** |
-| `autoflag_a` | The raw machine suggestion (always recomputed; never edited). |
+| `suggested` | What the thresholds say (1 = looks irrigated). Recomputed every run; never edited. |
+| `analyst` | **The only column you edit.** -1 (the seeded value) = go with the suggestion; 1 = treat this polygon; 0 = leave it alone. Carried over run to run. |
+| `autoflag` | The result: `analyst` where it is 0 or 1, else `suggested`. This is what the fill triggers on. Recomputed every run. |
 | `etg_mean` | Polygon mean raw ETg |
 | `bps_base` | Expected natural baseline for the polygon |
 | `etg_ratio` | `etg_mean / bps_base` |
@@ -395,12 +445,16 @@ irrigated, so its median baseline is likely inflated and the screen is probably
 `baseline_pctl` (e.g. to 30-40) and re-run with `--reset`.
 
 **Reviewing and overriding.** Open `<treatment>_autoflag.shp` in QGIS/ArcGIS,
-inspect `autoflag` and the diagnostics, and edit the `autoflag` value where your
-professional judgement differs (set it to 0 to reject a false positive, or 1 to
-add a feature the screen missed). Re-running the script **preserves your edits**
-(it compares `autoflag` against `autoflag_a` to detect overrides) unless you pass
-`--reset`. Polygons the analyst had already flagged manually (`scale_fctr` or
-`rplc_rt` > 0) are carried over as flagged.
+look at `suggested` and the diagnostics, and type 0 or 1 into `analyst` where
+your professional judgement differs (0 rejects a false positive, 1 adds a
+feature the screen missed). Re-running recomputes `suggested` and `autoflag` and
+**keeps `analyst` as you typed it**; `--reset` clears it back to -1. Nothing is
+inferred from `autoflag`: if you edit that column out of habit, the script keeps
+the edit by moving it into `analyst` and prints a note. Polygons already flagged
+by hand in the source shapefile (`scale_fctr`, `rplc_rt`, `bsnAv_flag` or
+`fixed_rt` > 0) are always `autoflag = 1`. A file from before 1.1.0 (with an
+`autoflag_a` column) is migrated on the first run: its overrides land in
+`analyst` and `autoflag_a` is dropped.
 
 **Running the fill on the flags.** Point the fill at the flagged copy and tell it
 to treat on the `autoflag` column - set in `config.toml`:
@@ -410,11 +464,11 @@ to treat on the `autoflag` column - set in `config.toml`:
 treatment_shp = "<treatment>_autoflag.shp"
 
 [treatment]
-attr_replace = "autoflag"
+attr_treat = ["scale_fctr", "rplc_rt", "autoflag"]
 ```
 
 Alternatively, run `flag_irrigated.py ... --mirror-to rplc_rt` to copy the flag
-into the standard `rplc_rt` trigger column, which saves you the `attr_replace`
+into the standard `rplc_rt` trigger column, which saves you the `attr_treat`
 line. You still need the `treatment_shp` line either way: the script writes a
 copy and never modifies your original shapefile.
 
@@ -467,7 +521,7 @@ One output does not land in `output/`: `flag_irrigated.py` writes
 
 | File | Description |
 |------|-------------|
-| `{key}_polygon_summary.csv` | Per-polygon statistics: `polygon_id`, pixel count, treatment type, `adj_factor`, and mean input / baseline / final ETg. Where the treatment shapefile carries `rplc_rt`, also `legacy_rplc_rt` and `baseline_minus_legacy` for reviewing the modeled rate against the hand-picked one |
+| `{key}_polygon_summary.csv` | Per-polygon statistics: `polygon_id`, pixel count, `treatment` (`baseline`, `basin_avg`, `fixed` or `none`), `trigger` (the column that selected it), `adj_factor`, `fixed_rate`, and mean input / baseline / final ETg. For a fixed-rate polygon the baseline column still shows what the model would have given, for review. Where the treatment shapefile carries `rplc_rt`, also `legacy_rplc_rt` and `baseline_minus_legacy` for reviewing the modeled rate against the hand-picked one |
 | `{key}_ETUNIT_SUMMARY.csv` | ET-unit-level summary: area (ac), volume (ac-ft), rate (ft/yr) with uncertainty |
 | `cross_basin_summary.csv` | (Project root) Cross-basin comparison after batch runs |
 
@@ -494,10 +548,13 @@ This section summarizes `etg_baseline_fill.py`.
 
 1. **Read the ETg raster.** Its CRS, extent, resolution, and dimensions become the
    template grid that everything else aligns to.
-2. **Rasterize the treatment shapefile.** Any polygon with `scale_fctr > 0` or
-   `rplc_rt > 0` is treated. Treatment polygons are buffered outward (default 90 m)
-   and burned into a binary treatment-zone mask. A per-pixel expert-adjustment raster
-   is built from the basin-wide default plus any per-polygon overrides.
+2. **Rasterize the treatment shapefile.** Each polygon gets a mode: `fixed`
+   (`fixed_rt > 0`), `basin_avg` (`bsnAv_flag > 0`), `baseline` (any `attr_treat`
+   column > 0) or `none`. Baseline and basin-average polygons are buffered outward
+   (default 90 m); fixed-rate polygons are not. All three are burned into the
+   treatment-zone mask, with fixed over basin-average over baseline where they overlap.
+   A per-pixel expert-adjustment raster is built from the basin-wide default plus any
+   per-polygon overrides, and a fixed-rate raster from the `fixed_rt` values.
 3. **Align BpS to the ETg grid** via nearest-neighbor resampling (categorical data).
 4. **Build the basin boundary mask.** The training boundary is resolved in order:
    `boundary_shp` from the config, then the matching NWI polygon, then the dissolved

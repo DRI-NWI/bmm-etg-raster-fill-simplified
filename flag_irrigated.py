@@ -7,11 +7,21 @@ in each treatment-shapefile polygon against the natural ETg of that polygon's
 LANDFIRE Biophysical Settings (BpS) vegetation class, and flags polygons whose
 ETg is elevated enough to suggest the feature is benefiting from irrigation.
 
-The flag is written into an ``autoflag`` attribute (0/1) on a copy of the
-shapefile.  A GIS analyst reviews the flags in QGIS/ArcGIS and overrides any
-false positives (set ``autoflag`` to 0) or missed features (set it to 1) using
-professional judgement.  Re-running the script preserves those manual overrides
-(unless ``--reset`` is passed), so the analyst's decisions are sticky.
+The result goes into three columns on a copy of the shapefile:
+
+    suggested   0/1   what the thresholds say.  Recomputed every run.
+    analyst    -1/0/1 THE ONLY COLUMN YOU EDIT.  -1 (the seeded value) means
+                      "go with the suggestion"; 1 = treat this polygon;
+                      0 = leave it alone.  Carried over run to run.
+    autoflag    0/1   the result: ``analyst`` where it is 0 or 1, else
+                      ``suggested``.  This is what the fill triggers on.
+
+A GIS analyst reviews in QGIS/ArcGIS and types 0 or 1 into ``analyst`` for the
+polygons they disagree with.  Nothing is inferred: re-running recomputes
+``suggested`` and ``autoflag`` and keeps ``analyst`` as typed (``--reset``
+clears it back to -1).  Polygons already marked by hand in the source
+shapefile (scale_fctr, rplc_rt, bsnAv_flag or fixed_rt above 0) are always
+``autoflag = 1``.
 
 How a polygon is flagged
 ------------------------
@@ -31,10 +41,11 @@ overridden on the command line.
 
 Acting on the flags
 --------------------
-The output shapefile keeps every original attribute and adds: ``autoflag``,
-``autoflag_a`` (the raw machine suggestion), and per-polygon diagnostics.  To
-run the fill on the flagged polygons, either set ``attr_replace = "autoflag"``
-in config.toml [treatment] and point ``treatment_shp`` at this file, or pass
+The output shapefile keeps every original attribute and adds ``suggested``,
+``analyst``, ``autoflag`` and per-polygon diagnostics.  To
+run the fill on the flagged polygons, either add ``"autoflag"`` to the
+``attr_treat`` list in config.toml [treatment] and point ``treatment_shp`` at
+this file, or pass
 ``--mirror-to rplc_rt`` here to copy the flag into the rplc_rt trigger column.
 
 Usage
@@ -42,7 +53,7 @@ Usage
     python flag_irrigated.py 053_PineValley
     python flag_irrigated.py 053_PineValley --ratio 1.4 --min-excess 0.25
     python flag_irrigated.py --all
-    python flag_irrigated.py 053_PineValley --reset          # recompute, drop overrides
+    python flag_irrigated.py 053_PineValley --reset          # clear the analyst column
     python flag_irrigated.py 053_PineValley --mirror-to rplc_rt
 
 License: MIT (see LICENSE)
@@ -73,8 +84,11 @@ sys.path.insert(0, str(_here))
 cfg = None  # set by _load_cfg()
 
 # Output attribute names (kept <= 10 chars for ESRI Shapefile / DBF).
-F_DECIDE = "autoflag"      # actionable decision (0/1); analyst edits this
-F_AUTO   = "autoflag_a"    # raw machine suggestion (0/1); recomputed every run
+F_DECIDE  = "autoflag"     # result (0/1): what the fill triggers on; recomputed
+F_SUGGEST = "suggested"    # machine suggestion (0/1); recomputed every run
+F_ANALYST = "analyst"      # analyst's call: -1 = defer to suggestion, 0 = no, 1 = yes
+F_AUTO_LEGACY = "autoflag_a"   # pre-1.1.0 name of the suggestion column
+NO_OPINION = -1
 F_MEAN   = "etg_mean"      # polygon mean raw ETg
 F_BASE   = "bps_base"      # expected natural baseline for the polygon
 F_RATIO  = "etg_ratio"     # etg_mean / bps_base
@@ -258,42 +272,73 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
             return f"BpS {code}"
 
     # -- Treatment attributes -----------------------------------------------
-    attr_scale = cfg.ATTR_SCALE
-    attr_replace = cfg.ATTR_REPLACE
-    has_scale = attr_scale in gdf.columns
-    has_replace = attr_replace in gdf.columns
+    # Every column that already marks a polygon for treatment in the fill:
+    # the attr_treat list plus the basin-average and fixed-rate columns.
+    attr_treat = list(getattr(cfg, "ATTR_TREAT", [cfg.ATTR_SCALE, cfg.ATTR_REPLACE]))
+    manual_cols = [c for c in attr_treat
+                   + [getattr(cfg, "ATTR_BASIN_AVG", ""), getattr(cfg, "ATTR_FIXED", "")]
+                   if c and c in gdf.columns]
     id_col = _pick_id_column(gdf)
 
-    # -- Load prior overrides from a previous run (if any) -------------------
+    # -- Load the analyst column from a previous run (if any) ----------------
+    # Matched by polygon ID when both files have a unique one, else by row
+    # position when the row counts agree.  Each prior entry is
+    # (analyst, autoflag, suggested) from the last run; the hand-edit rescue
+    # and the pre-1.1.0 migration are decided in the loop below, where the
+    # polygon's manual flag is known.
     orig_stem = Path(cfg.TREATMENT_SHP).stem
     out_shp = Path(cfg.TREATMENT_SHP).parent / f"{orig_stem}_autoflag.shp"
-    prior = {}          # id -> (decision, auto) from a previous output
+    NONE_PRIOR = (NO_OPINION, None, None)
+    prior = {}          # id -> entry
     prior_by_pos = []   # positional fallback
+    legacy_file = False
     if out_shp.exists() and not reset:
         try:
             pg = gpd.read_file(out_shp)
-            if F_DECIDE in pg.columns and F_AUTO in pg.columns:
+            n = len(pg)
+            if F_ANALYST in pg.columns:
+                a_prev = pg[F_ANALYST].fillna(NO_OPINION).astype(int).tolist()
+                d_prev = (pg[F_DECIDE].fillna(0).astype(int).tolist()
+                          if F_DECIDE in pg.columns else [None] * n)
+                s_prev = (pg[F_SUGGEST].fillna(0).astype(int).tolist()
+                          if F_SUGGEST in pg.columns else [None] * n)
+            elif F_DECIDE in pg.columns and F_AUTO_LEGACY in pg.columns:
+                # Pre-1.1.0 layout: no analyst column.  Wherever autoflag
+                # differs from autoflag_a the analyst changed it.
+                legacy_file = True
+                a_prev = [NO_OPINION] * n
+                d_prev = pg[F_DECIDE].fillna(0).astype(int).tolist()
+                s_prev = pg[F_AUTO_LEGACY].fillna(0).astype(int).tolist()
+            else:
+                a_prev = None
+            if a_prev is not None:
+                entries = [(a if a in (0, 1) else NO_OPINION, d, s_)
+                           for a, d, s_ in zip(a_prev, d_prev, s_prev)]
                 if id_col and id_col in pg.columns and pg[id_col].is_unique \
                         and gdf[id_col].is_unique:
-                    prior = {pg[id_col].iloc[i]: (pg[F_DECIDE].iloc[i], pg[F_AUTO].iloc[i])
-                             for i in range(len(pg))}
-                elif len(pg) == len(gdf):
-                    prior_by_pos = list(zip(pg[F_DECIDE].tolist(), pg[F_AUTO].tolist()))
+                    prior = dict(zip(pg[id_col].tolist(), entries))
+                elif n == len(gdf):
+                    prior_by_pos = entries
+                else:
+                    _log(f"    (cannot match rows of {out_shp.name} to the "
+                         f"treatment shapefile - analyst column not carried over)")
         except Exception as e:
-            _log(f"    (could not read prior overrides from {out_shp.name}: {e})")
+            _log(f"    (could not read prior '{F_ANALYST}' values from "
+                 f"{out_shp.name}: {e})")
 
     def _prior_for(i, row):
         if prior and id_col is not None:
-            return prior.get(row[id_col])
+            return prior.get(row[id_col], NONE_PRIOR)
         if prior_by_pos:
             return prior_by_pos[i]
-        return None
+        return NONE_PRIOR
 
     # -- Per-polygon screening ----------------------------------------------
     gdf_r = gdf.reset_index(drop=True)
-    dec, auto, means, bases, ratios, excs, doms, npix = ([] for _ in range(8))
+    dec, sugg, analyst, means, bases, ratios, excs, doms, npix = ([] for _ in range(9))
     rows_report = []
     n_auto = n_manual = n_override = 0
+    n_edited_result = n_migrated = 0
 
     for i, row in gdf_r.iterrows():
         geom = row.geometry
@@ -323,34 +368,36 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
                 else:
                     af_a = int(eexc >= min_excess)
 
-        # Decision: analyst override > existing manual flag > auto suggestion.
-        manual_flag = False
-        if has_scale and float(row.get(attr_scale, 0) or 0) > 0:
-            manual_flag = True
-        if has_replace and float(row.get(attr_replace, 0) or 0) > 0:
-            manual_flag = True
+        # Result: analyst (0/1) > existing manual flag > suggestion.
+        manual_flag = any(float(row.get(c, 0) or 0) > 0 for c in manual_cols)
+        a_val, d_prev, s_prev = _prior_for(i, row) if not reset else NONE_PRIOR
+        if a_val not in (0, 1):
+            a_val = NO_OPINION
+            # The stored result disagrees with the stored suggestion and the
+            # analyst column says nothing: the analyst edited the result
+            # column (old habit), or this is a pre-1.1.0 file.  Keep that
+            # decision by moving it into the analyst column.  A manually
+            # flagged polygon is always 1 regardless, so it is not an edit.
+            if (d_prev in (0, 1) and s_prev in (0, 1) and d_prev != s_prev
+                    and not manual_flag):
+                a_val = d_prev
+                if legacy_file:
+                    n_migrated += 1
+                else:
+                    n_edited_result += 1
 
-        prior_vals = _prior_for(i, row)
-        source = "auto"
-        decision = af_a
-        if prior_vals is not None and not reset:
-            p_dec, p_auto = prior_vals
-            try:
-                p_dec = int(p_dec); p_auto = int(p_auto)
-            except (TypeError, ValueError):
-                p_dec = p_auto = None
-            if p_dec is not None and p_dec != p_auto:
-                decision = p_dec       # analyst changed it away from the suggestion
-                source = "analyst_override"
-                n_override += 1
-        if source == "auto" and manual_flag:
-            decision = 1
-            source = "manual_flag"
+        if a_val in (0, 1):
+            decision, source = a_val, "analyst"
+            n_override += 1
+        elif manual_flag:
+            decision, source = 1, "manual_flag"
             n_manual += 1
-        if af_a == 1 and source == "auto":
-            n_auto += 1
+        else:
+            decision, source = af_a, "suggested"
+            if af_a == 1:
+                n_auto += 1
 
-        dec.append(int(decision)); auto.append(int(af_a))
+        dec.append(int(decision)); sugg.append(int(af_a)); analyst.append(int(a_val))
         means.append(round(emean, 4)); bases.append(round(ebase, 4))
         ratios.append(round(eratio, 4)); excs.append(round(eexc, 4))
         doms.append(dom); npix.append(n)
@@ -359,13 +406,24 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
             F_NPIX: n, F_DOM: dom, "bps_dom_name": _bps_name(dom, _lut) if dom else "",
             F_MEAN: round(emean, 4), F_BASE: round(ebase, 4),
             F_RATIO: round(eratio, 4), F_EXCESS: round(eexc, 4),
-            F_AUTO: int(af_a), F_DECIDE: int(decision), "source": source,
+            F_SUGGEST: int(af_a), F_ANALYST: int(a_val), F_DECIDE: int(decision),
+            "source": source,
         })
 
     # -- Assemble + write output shapefile ----------------------------------
     out = gdf.copy()
+    out[F_SUGGEST] = sugg
+    out[F_ANALYST] = analyst
     out[F_DECIDE] = dec
-    out[F_AUTO] = auto
+    out = out.drop(columns=[F_AUTO_LEGACY], errors="ignore")
+    if legacy_file:
+        _log(f"    migrating pre-1.1.0 {out_shp.name}: {n_migrated} analyst "
+             f"override(s) moved into the '{F_ANALYST}' column; "
+             f"'{F_AUTO_LEGACY}' is dropped")
+    if n_edited_result:
+        _log(f"    NOTE: {n_edited_result} row(s) had '{F_DECIDE}' edited by hand. "
+             f"Kept, but please edit '{F_ANALYST}' instead: '{F_DECIDE}' is "
+             f"recomputed every run.")
     out[F_MEAN] = means
     out[F_BASE] = bases
     out[F_RATIO] = ratios
@@ -373,10 +431,9 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
     out[F_DOM] = doms
     out[F_NPIX] = npix
     # Ensure the fill tool's trigger columns exist so the output is fill-ready.
-    if not has_scale:
-        out[attr_scale] = 0.0
-    if not has_replace:
-        out[attr_replace] = 0.0
+    for c in attr_treat:
+        if c not in out.columns:
+            out[c] = 0.0
 
     # Seed a stable per-polygon label if the source lacks one, so rows in
     # {key}_polygon_summary.csv trace back to features.  (Rate tuning happens
@@ -447,23 +504,24 @@ def flag_one(study_area: str, ratio_thresh: float, min_excess: float,
     n_flagged = int(sum(dec))
     _log("-- Summary -----------------------------------------")
     _log(f"  polygons total          : {len(out):,}")
-    _log(f"  auto-detected (new)     : {n_auto:,}")
-    _log(f"  carried existing manual : {n_manual:,}")
-    _log(f"  analyst overrides kept  : {n_override:,}")
-    _log(f"  FLAGGED for treatment   : {n_flagged:,}  (autoflag = 1)")
+    _log(f"  suggested by thresholds : {n_auto:,}")
+    _log(f"  already flagged by hand : {n_manual:,}")
+    _log(f"  decided by analyst col  : {n_override:,}")
+    _log(f"  FLAGGED for treatment   : {n_flagged:,}  ({F_DECIDE} = 1)")
     for c, name, pct in contaminated:
         _log(f"  WARNING: BpS {c} ({name}) has {pct:.0f}% of its in-basin area inside "
              f"flagged polygons - its p{pctl:g} baseline may be irrigation-inflated and "
              f"cause under-flagging. Consider lowering baseline_pctl (e.g. 30-40) and "
              f"re-running with --reset.")
-    _log("  Next: review the 'autoflag' column in QGIS; set it to 0 to reject a")
-    _log("  false positive or 1 to add a missed one, then re-run (overrides stick).")
+    _log(f"  Next: review in QGIS.  '{F_SUGGEST}' is the machine's call; type 0 or 1")
+    _log(f"  into '{F_ANALYST}' where you disagree (-1 = go with the suggestion),")
+    _log(f"  then re-run.  '{F_DECIDE}' is the result and is recomputed every run.")
     if mirror_to:
         _log(f"  The fill will treat flagged polygons via the '{mirror_to}' column.")
     else:
-        _log(f"  To run the fill on these flags, set attr_replace = \"{F_DECIDE}\" in")
+        _log(f"  To run the fill on these flags, add \"{F_DECIDE}\" to attr_treat in")
         _log(f"  config.toml [treatment] and point treatment_shp at {out_shp.name},")
-        _log(f"  or re-run with --mirror-to {attr_replace}.")
+        _log(f"  or re-run with --mirror-to {attr_treat[-1] if attr_treat else 'rplc_rt'}.")
 
 
 def _cli():
@@ -486,7 +544,7 @@ def _cli():
     ap.add_argument("--pctl", type=float, default=None,
                     help="Override the per-BpS-class baseline percentile (50 = median).")
     ap.add_argument("--reset", action="store_true",
-                    help="Recompute flags from scratch, discarding prior analyst overrides.")
+                    help="Clear the 'analyst' column back to -1 (drop every hand decision).")
     ap.add_argument("--mirror-to", metavar="ATTR", default=None,
                     help="Also copy the autoflag decision into this trigger column "
                          "(e.g. rplc_rt) so the fill treats flagged polygons unchanged.")

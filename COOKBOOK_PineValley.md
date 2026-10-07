@@ -250,9 +250,9 @@ dropped here:
 [18:04:38]   -> wrote 053_PineValley_autoflag_class_summary.csv
 ...
 [18:04:38]   polygons total          : 152
-[18:04:38]   auto-detected (new)     : 8
-[18:04:38]   carried existing manual : 100
-[18:04:38]   analyst overrides kept  : 0
+[18:04:38]   suggested by thresholds : 8
+[18:04:38]   already flagged by hand : 100
+[18:04:38]   decided by analyst col  : 0
 [18:04:38]   FLAGGED for treatment   : 108  (autoflag = 1)
 [18:04:38]   WARNING: BpS 11 (Open Water) has 86% of its in-basin area inside flagged polygons - its p50
            baseline may be irrigation-inflated and cause under-flagging.
@@ -269,12 +269,14 @@ flagged polygons, its median is pulled up by the irrigated pixels, so the
 screen is comparing against an inflated baseline and under-flags that class.
 If you care about riparian specifically, re-run with `--pctl 35 --reset`.
 
-**Review the flags.** Open the `_autoflag.shp` copy in QGIS. The `autoflag`
-column is the decision (1 = treat, 0 = leave); `autoflag_a` is the raw machine
-suggestion and the per-polygon diagnostics explain why. Set `autoflag` to 0 or
-1 where you disagree and re-run the command above. Your edits stick, because
-the script compares `autoflag` against `autoflag_a` to find them. Pass
-`--reset` to throw them away and start over.
+**Review the flags.** Open the `_autoflag.shp` copy in QGIS. Three columns
+matter: `suggested` is the machine's call (1 = treat), `analyst` is yours, and
+`autoflag` is the result the fill will use. Type 0 or 1 into `analyst` where you
+disagree (leave it at -1 to go with the suggestion) and re-run the command
+above. `analyst` is carried over as typed; `suggested` and `autoflag` are
+recomputed, so do not edit those. Pass `--reset` to clear `analyst` and start
+over. The per-polygon diagnostics (`etg_ratio`, `etg_excs`, `bps_base`)
+explain each suggestion.
 
 **Point the fill at the flags.** Nothing uses the copy until you tell the fill
 about it. Edit `config.toml`:
@@ -284,7 +286,7 @@ about it. Edit `config.toml`:
 treatment_shp = "NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp"
 
 [treatment]
-attr_replace = "autoflag"
+attr_treat = ["scale_fctr", "rplc_rt", "autoflag"]
 ```
 
 Or run `python flag_irrigated.py 053_PineValley --mirror-to rplc_rt`, which
@@ -598,9 +600,11 @@ there. No field creation, no edits to your master shapefile.
 |---|---|
 | `row_i`, `poly_id` | which polygon (matches `polygon_id` in the summary CSV) |
 | `treated` | 1 = replaced by the fill, 0 = left as raw ETg |
+| `mode`, `trigger` | how it was filled (`baseline`, `basin_avg`, `fixed`, `none`) and which column selected it |
 | `etg_input`, `etg_base`, `etg_final` | this run's mean rates (ft/yr) |
 | `lgcy_rt` | the analyst's legacy `rplc_rt`, for comparison |
-| `adj_fctr` | **the column you edit** |
+| `adj_fctr` | **the column you edit** to scale a polygon's modeled rate |
+| `fixed_rt` | **or this one**, to burn in a rate (ft/yr) as-is, e.g. `4.0` for open water. No model, no cap, no feather. |
 
 Open it in QGIS, style it by `etg_base` or `lgcy_rt`, and type overrides into
 `adj_fctr`:
@@ -617,10 +621,12 @@ and your overrides intact. A per-polygon value beats `baseline_adjust`.
 
 Two rules keep this unambiguous. If your treatment shapefile carries its own
 `adj_fctr` column with values, that wins and the rates file is ignored as an
-input (the log says so). And the rates file deliberately has no
-`scale_fctr` / `rplc_rt` columns, so pointing `treatment_shp` at it by mistake
-fails with a clear error instead of silently treating the wrong polygons.
-It cannot change which polygons are treated, only their rates.
+input (the log says so). The same two rules apply to `fixed_rt`. And the
+rates file deliberately has no `scale_fctr` / `rplc_rt` columns, so pointing
+`treatment_shp` at it by mistake fails with a clear error instead of silently
+treating the wrong polygons. Through `adj_fctr` it cannot change which
+polygons are treated, only their rates; through `fixed_rt` it can add a
+burned-in polygon, which is the point.
 
 The old route still works too: add `adj_fctr` to the treatment shapefile
 itself (rename via `[adjustment] attr_adjust`).
@@ -686,9 +692,11 @@ can still pull an untouched polygon's edge pixels down. In the Pine Valley run,
 Only the interior is guaranteed untouched. Set `feather_width_px = 0` if you
 need a hard boundary.
 
-You can also drive treatment off a different column entirely, with
-`[treatment] attr_scale` and `attr_replace`. That is what the optional
-auto-flag step (Step 4b) uses.
+You can also drive treatment off different columns entirely, with the
+`[treatment] attr_treat` list. That is what the optional auto-flag step
+(Step 4b) uses. Two more columns select a different kind of fill:
+`bsnAv_flag` (basin-average replacement) and `fixed_rt` (a rate burned in
+as-is, for open water and the like). See CONFIG_GUIDE.md.
 
 ### When the problem is the model, not one polygon
 
@@ -757,7 +765,7 @@ change, means something is actually wrong: work through the table below.
 | `ERROR: Missing required inputs ... ETG_TIF, TREATMENT_SHP` | `config.toml` still holds `# PLACE ...` placeholders. | Put the files in `source/`, re-run `prep_basin.py 053_PineValley`, or type the filenames into `config.toml`. |
 | `WARNING: that boundary covers only 22% of the valid ETg extent` | Custom basins only. The training boundary came from the treatment shapefile, which does not tile the basin. | Set `boundary_shp` in `config.toml` to a real basin outline, or re-prep with `--boundary`. |
 | `valid training pixels` in the hundreds or low thousands | Same cause as above, or a CRS mismatch between the ETg raster and the boundary. | Check step 4 of the log for which boundary was used and how many pixels it covered. |
-| `ERROR: attribute 'scale_fctr' not found` | The shapefile lacks the trigger columns. | Add `scale_fctr` and `rplc_rt`, or point `attr_replace` at the column you do have. |
+| `ERROR: none of the attr_treat columns [...] found` | The shapefile lacks every trigger column. | Add `scale_fctr` or `rplc_rt`, or list the column you do have in `[treatment] attr_treat`. |
 | `053_PineValley_SKIPPED.txt` appears | Fewer than 50 training pixels survived. | Almost always a boundary or CRS problem, not a genuinely small basin. |
 | Treatment-zone volume change is positive | The fill added ETg. The downward-only cap and the feather clip both run after the expert adjustment, so this should not be reachable. | Do not use the output. Check `run_metadata.txt` against the reference numbers and report it. |
 | BpS colours don't load in QGIS | The `.tif` had no embedded colour table (no gdal at prep time). | Layer Properties, Symbology, Load Style, pick `input/BpS.qml`. |

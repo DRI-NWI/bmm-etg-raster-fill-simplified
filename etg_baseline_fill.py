@@ -28,18 +28,29 @@ residual model never improved on the BpS-class baseline, so it was removed.
 
 Treatment handling
 ------------------
-Any polygon in the treatment shapefile whose ``scale_fctr`` or ``rplc_rt``
-attribute is > 0 is treated: its pixels are fully replaced with the baseline
-(optionally scaled by an expert adjustment factor, and never allowed to exceed
-the original input ETg).  Gaussian edge feathering blends the replaced values
-into the surrounding landscape just OUTSIDE the treatment boundary.  Polygons
-where both attributes are zero are left untouched.
+A polygon in the treatment shapefile is treated when any of these columns is
+> 0 (names are set in config.toml, defaults shown).  Highest priority first:
+
+* ``fixed_rt``   - the value is burned in as-is (ft/yr).  No model, no
+                   adjustment factor, no downward cap, no buffer, no feather.
+                   For open water and other hand-assigned rates.
+* ``bsnAv_flag`` - filled with the basin-wide mean of the training pixels
+                   (every valid pixel outside the treatment zones), the
+                   legacy BMM "basin average" replacement.
+* ``scale_fctr`` / ``rplc_rt`` (any column listed in ``attr_treat``) -
+                   filled with the modeled BpS baseline.
+
+The last two are "baseline" fills: the replacement is scaled by the expert
+adjustment factor, never allowed to exceed the original input ETg, and
+blended into the surroundings by Gaussian edge feathering just OUTSIDE the
+(buffered) treatment boundary.  Polygons with zeros everywhere are untouched.
 
 Workflow (8 steps)
 ------------------
 1. Read ETg raster as the template grid (CRS, extent, resolution).
-2. Rasterize treatment shapefile -> single buffered treatment_zone mask
-   (+ per-polygon adjustment-factor raster).
+2. Rasterize treatment shapefile -> single treatment_zone mask (baseline
+   polygons buffered, fixed-rate polygons not), plus the per-polygon
+   adjustment-factor, basin-average and fixed-rate rasters.
 3. Reproject / resample BpS to the ETg grid.
 4. Build the basin boundary mask (constrain training to within the basin).
 5. Build the training set (outside treatment, within basin) and compute the
@@ -69,6 +80,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 
 # -- Geospatial imports ------------------------------------------------------
@@ -349,92 +361,181 @@ def main(study_area: str | None = None) -> None:
         _log(f"    reprojecting from {gdf.crs} -> {etg_crs}")
         gdf = gdf.to_crs(etg_crs)
 
-    for col in (cfg.ATTR_SCALE, cfg.ATTR_REPLACE):
-        if col not in gdf.columns:
-            sys.exit(f"ERROR: attribute '{col}' not found in {cfg.TREATMENT_SHP.name}")
-        gdf[col] = gdf[col].fillna(0).astype(float)
+    attr_treat     = list(getattr(cfg, "ATTR_TREAT", [cfg.ATTR_SCALE, cfg.ATTR_REPLACE]))
+    attr_basin_avg = getattr(cfg, "ATTR_BASIN_AVG", "bsnAv_flag")
+    attr_fixed     = getattr(cfg, "ATTR_FIXED", "fixed_rt")
+    attr_adjust    = getattr(cfg, "ATTR_ADJUST", "adj_fctr")
 
-    gdf["_is_treated"] = (gdf[cfg.ATTR_SCALE] > 0) | (gdf[cfg.ATTR_REPLACE] > 0)
+    # At least one baseline trigger column must exist.  This is also what
+    # makes pointing treatment_shp at a {key}_rates_adjust.shp fail loudly:
+    # that file deliberately carries none of them.
+    present_treat = [c for c in attr_treat if c in gdf.columns]
+    for c in attr_treat:
+        if c not in gdf.columns:
+            _log(f"    note: trigger column '{c}' not in {cfg.TREATMENT_SHP.name}")
+    if not present_treat:
+        sys.exit(f"ERROR: none of the attr_treat columns {attr_treat} found in "
+                 f"{cfg.TREATMENT_SHP.name}")
+    for c in present_treat:
+        gdf[c] = gdf[c].fillna(0).astype(float)
+    for c in (attr_basin_avg, attr_fixed):
+        if c and c in gdf.columns:
+            gdf[c] = gdf[c].fillna(0).astype(float)
+
+    # A statewide treatment file still gives correct rasters (polygons off the
+    # grid burn nothing), but step 8 then loops over every polygon in it.
+    # Flag it so the analyst can subset with prep_*.py --treatment-src.
+    from shapely.geometry import box as _box
+    from rasterio.transform import array_bounds as _array_bounds
+    # array_bounds returns (west, south, east, north), the order box() takes.
+    _grid_box = _box(*_array_bounds(grid_shape[0], grid_shape[1],
+                                    grid_transform))
+    try:
+        n_off = int((~gdf.geometry.intersects(_grid_box)).sum())
+    except Exception:
+        n_off = 0   # a bad geometry should not stop the run over a warning
+    if len(gdf) and n_off / len(gdf) > 0.5:
+        _log(f"    WARNING: {n_off:,} of {len(gdf):,} treatment polygons lie "
+             f"outside the ETg raster.  This looks like a statewide file.  It "
+             f"works, but the per-polygon summary will be slow.  Subset it "
+             f"with prep_basin.py / prep_custom_basin.py --treatment-src.")
+
+    # -- 2a. Per-polygon overrides: adj_fctr and fixed_rt --------------------
+    # Each can come from two places, in order of precedence:
+    #   1. the column in the treatment shapefile itself;
+    #   2. the ``{key}_rates_adjust.shp`` review file that this script writes
+    #      next to the treatment shapefile at the end of every run.  Analysts
+    #      edit the columns there (pre-seeded, no field creation needed) and
+    #      simply re-run; edits round-trip automatically.
+    rates_shp = Path(cfg.TREATMENT_SHP).parent / \
+        f"{cfg.STUDY_AREA_NAME}_rates_adjust.shp"
+    gdf_rates = None
+    if rates_shp.exists():
+        try:
+            gdf_rates = gpd.read_file(rates_shp)
+            if not ("row_i" in gdf_rates.columns and len(gdf_rates) > 0
+                    and int(gdf_rates["row_i"].max()) < len(gdf)):
+                _log(f"   2a . WARNING: {rates_shp.name} does not match the "
+                     f"treatment shapefile (row_i missing or out of range) - "
+                     f"ignoring it. Delete it to silence this warning.")
+                gdf_rates = None
+        except Exception as e:
+            _log(f"   2a . WARNING: could not read {rates_shp.name} ({e}) - "
+                 f"ignoring it")
+            gdf_rates = None
+
+    def _read_override(col: str) -> str | None:
+        """Make ``gdf[col]`` hold the effective per-polygon override (0 = none).
+        Returns a description of where the values came from, or None."""
+        if not col:
+            return None
+        if col in gdf.columns and gdf[col].fillna(0).astype(float).gt(0).any():
+            gdf[col] = gdf[col].fillna(0).astype(float)
+            if gdf_rates is not None and col in gdf_rates.columns:
+                _log(f"   2a . Note: '{col}' in the treatment shapefile takes "
+                     f"precedence; '{col}' in {rates_shp.name} is ignored")
+            return f"treatment shapefile column '{col}'"
+        if gdf_rates is not None and col in gdf_rates.columns:
+            vals = gdf_rates[col].fillna(0).astype(float)
+            picked = {int(r): float(v)
+                      for r, v in zip(gdf_rates["row_i"].astype(int), vals)
+                      if v > 0}
+            if picked:
+                gdf[col] = 0.0
+                for r, v in picked.items():
+                    gdf.loc[r, col] = v
+                _log(f"   2a . Read {len(picked)} '{col}' override(s) "
+                     f"from {rates_shp.name}")
+                return rates_shp.name
+        return None
+
+    _adj_src   = _read_override(attr_adjust)
+    _fixed_src = _read_override(attr_fixed)
+
+    # -- Treatment mode per polygon: fixed > basin_avg > baseline > none -----
+    def _col_pos(col):
+        if col and col in gdf.columns:
+            return gdf[col].fillna(0).astype(float) > 0
+        return pd.Series(False, index=gdf.index)
+
+    is_fixed = _col_pos(attr_fixed)
+    is_bavg  = _col_pos(attr_basin_avg) & ~is_fixed
+    is_base  = pd.Series(False, index=gdf.index)
+    trigger  = pd.Series("", index=gdf.index)
+    for c in present_treat:
+        hit = _col_pos(c)
+        trigger[hit & (trigger == "")] = c
+        is_base |= hit
+    trigger[is_bavg & (trigger == "")] = attr_basin_avg
+    trigger[is_fixed] = attr_fixed
+    is_base &= ~is_fixed & ~is_bavg
+
+    gdf["_mode"] = "none"
+    gdf.loc[is_base,  "_mode"] = "baseline"
+    gdf.loc[is_bavg,  "_mode"] = "basin_avg"
+    gdf.loc[is_fixed, "_mode"] = "fixed"
+    gdf["_trigger"] = trigger
+    gdf["_is_treated"] = gdf["_mode"] != "none"
     n_treated = int(gdf["_is_treated"].sum())
     n_skip    = len(gdf) - n_treated
     _log(f"    polygons:  {n_treated} treatment  |  {n_skip} untouched")
+    _log(f"      baseline fill ({', '.join(present_treat)}): "
+         f"{int(is_base.sum())}")
+    if attr_basin_avg:
+        _log(f"      basin average ('{attr_basin_avg}'): {int(is_bavg.sum())}"
+             + ("" if attr_basin_avg in gdf.columns else "   (column absent)"))
+    if attr_fixed:
+        _log(f"      fixed rate ('{attr_fixed}'): {int(is_fixed.sum())}"
+             + (f"   from {_fixed_src}" if _fixed_src else
+                ("" if attr_fixed in gdf.columns else "   (column absent)")))
 
-    # -- 2a. Treatment-zone mask (with optional buffer) ----------------------
-    gdf_treat = gdf[gdf["_is_treated"]].copy()
-    if cfg.BUFFER_M > 0 and len(gdf_treat) > 0:
-        _log(f"    buffering treatment polygons by {cfg.BUFFER_M} CRS-units")
-        gdf_treat["geometry"] = gdf_treat.geometry.buffer(cfg.BUFFER_M)
+    def _shapes(mask, value_col=None, buffer=0.0):
+        out = []
+        for _, r in gdf[mask].iterrows():
+            geom = r.geometry
+            if geom is None or not geom.is_valid:
+                continue
+            if buffer > 0:
+                geom = geom.buffer(buffer)
+            out.append((geom, float(r[value_col]) if value_col else 1))
+        return out
 
-    treat_shapes = [
-        (geom, 1)
-        for geom in gdf_treat.geometry
-        if geom is not None and geom.is_valid
-    ]
-    treatment_zone = rasterize(
-        treat_shapes,
-        out_shape=grid_shape,
-        transform=grid_transform,
-        fill=0,
-        dtype=np.uint8,
-    ) if treat_shapes else np.zeros(grid_shape, dtype=np.uint8)
+    def _burn(shapes, dtype, fill=0):
+        if not shapes:
+            return np.full(grid_shape, fill, dtype=dtype)
+        return rasterize(shapes, out_shape=grid_shape, transform=grid_transform,
+                         fill=fill, dtype=dtype)
 
-    # -- 2b. Per-pixel adjustment factor raster ------------------------------
+    # -- 2b. Treatment-zone mask ----------------------------------------------
+    # Baseline and basin-average polygons are buffered (irrigation signal
+    # spills past field edges).  Fixed-rate polygons are not: a lake edge is
+    # a hard edge, and a burned-in rate must not spread into its neighbours.
+    buf = cfg.BUFFER_M if cfg.BUFFER_M > 0 else 0.0
+    if buf > 0 and (is_base | is_bavg).any():
+        _log(f"    buffering baseline / basin-average polygons by {buf} CRS-units")
+    zone_base  = _burn(_shapes(is_base, buffer=buf), np.uint8).astype(bool)
+    zone_bavg  = _burn(_shapes(is_bavg, buffer=buf), np.uint8).astype(bool)
+    fixed_raster = _burn(_shapes(is_fixed, value_col=attr_fixed), "float32", 0.0)
+    fixed_mask = fixed_raster > 0
+    # Pixel-level precedence: fixed > basin_avg > baseline.
+    zone_bavg &= ~fixed_mask
+    zone_base &= ~fixed_mask & ~zone_bavg
+    treatment_zone = (zone_base | zone_bavg | fixed_mask).astype(np.uint8)
+
+    # -- 2c. Per-pixel adjustment factor raster ------------------------------
     basin_adjust = getattr(cfg, "BASELINE_ADJUST", 1.0)
-    attr_adjust  = getattr(cfg, "ATTR_ADJUST", "adj_fctr")
     adjust_raster = np.full(grid_shape, basin_adjust, dtype=np.float32)
 
-    # Per-polygon overrides can come from two places, in order of precedence:
-    #   1. an ``adj_fctr`` column in the treatment shapefile itself;
-    #   2. the ``{key}_rates_adjust.shp`` review file that this script writes
-    #      next to the treatment shapefile at the end of every run.  Analysts
-    #      edit adj_fctr there (the column is pre-seeded, no field creation
-    #      needed) and simply re-run; edits round-trip automatically.
-    rates_shp = Path(cfg.TREATMENT_SHP).parent / \
-        f"{cfg.STUDY_AREA_NAME}_rates_adjust.shp"
-    _adj_src = None
-    if (attr_adjust and attr_adjust in gdf.columns
-            and gdf[attr_adjust].fillna(0).astype(float).gt(0).any()):
-        _adj_src = f"treatment shapefile column '{attr_adjust}'"
-        if rates_shp.exists():
-            _log(f"   2b . Note: '{attr_adjust}' in the treatment shapefile takes "
-                 f"precedence; {rates_shp.name} is ignored as an input this run")
-    elif rates_shp.exists():
-        try:
-            gdf_rates = gpd.read_file(rates_shp)
-            ok = ("row_i" in gdf_rates.columns
-                  and attr_adjust in gdf_rates.columns
-                  and len(gdf_rates) > 0
-                  and int(gdf_rates["row_i"].max()) < len(gdf))
-            if not ok:
-                _log(f"   2b . WARNING: {rates_shp.name} does not match the "
-                     f"treatment shapefile (row_i/{attr_adjust} missing or out of "
-                     f"range) - ignoring it. Delete it to silence this warning.")
-            else:
-                vals = gdf_rates[attr_adjust].fillna(0).astype(float)
-                picked = {int(r): float(v)
-                          for r, v in zip(gdf_rates["row_i"].astype(int), vals)
-                          if v > 0}
-                if picked:
-                    if attr_adjust not in gdf.columns:
-                        gdf[attr_adjust] = 0.0
-                    for r, v in picked.items():
-                        gdf.loc[r, attr_adjust] = v
-                    _adj_src = rates_shp.name
-                    _log(f"   2b . Read {len(picked)} '{attr_adjust}' override(s) "
-                         f"from {rates_shp.name}")
-        except Exception as e:
-            _log(f"   2b . WARNING: could not read {rates_shp.name} ({e}) - "
-                 f"ignoring it")
-
-    has_per_poly_adj = (
+    has_per_poly_adj = bool(
         attr_adjust
         and attr_adjust in gdf.columns
-        and gdf[gdf["_is_treated"]][attr_adjust].fillna(0).astype(float).gt(0).any()
+        and gdf[gdf["_mode"].isin(("baseline", "basin_avg"))][attr_adjust]
+            .fillna(0).astype(float).gt(0).any()
     )
     if has_per_poly_adj:
-        _log(f"   2b . Rasterizing per-polygon adjustment factors "
+        _log(f"   2c . Rasterizing per-polygon adjustment factors "
              f"(column '{attr_adjust}') ...")
-        gdf_adj = gdf[gdf["_is_treated"]].copy()
+        gdf_adj = gdf[gdf["_mode"].isin(("baseline", "basin_avg"))].copy()
         gdf_adj[attr_adjust] = gdf_adj[attr_adjust].fillna(0).astype(float)
         adj_shapes = []
         for _, r in gdf_adj[gdf_adj[attr_adjust] > 0].iterrows():
@@ -455,14 +556,14 @@ def main(study_area: str | None = None) -> None:
             _log(f"    per-polygon overrides applied to {n_override_px:,} pixels")
     else:
         if attr_adjust and attr_adjust not in gdf.columns:
-            _log(f"   2b . Per-polygon adjustment column '{attr_adjust}' not found "
+            _log(f"   2c . Per-polygon adjustment column '{attr_adjust}' not found "
                  f"in shapefile - using basin-wide default ({basin_adjust})")
             _log(f"        To tune single polygons, edit the '{attr_adjust}' "
                  f"column in {rates_shp.name} (written to the treatment "
                  f"shapefile's folder at the end of this run; 0 = no override, "
                  f"0.8 = cut that polygon's baseline 20%) and re-run.")
         else:
-            _log(f"   2b . No per-polygon adjustment overrides - "
+            _log(f"   2c . No per-polygon adjustment overrides - "
                  f"using basin-wide default ({basin_adjust})")
 
     adjustment_active = (basin_adjust != 1.0) or has_per_poly_adj
@@ -471,7 +572,9 @@ def main(study_area: str | None = None) -> None:
 
     _write_raster(treatment_zone, etg_prof, out_dir / "treatment_zone.tif", dtype="uint8")
     n_treat_px = int(treatment_zone.sum())
-    _log(f"    treatment-zone pixels: {n_treat_px:,}")
+    _log(f"    treatment-zone pixels: {n_treat_px:,}  "
+         f"(baseline {int(zone_base.sum()):,}, basin-average {int(zone_bavg.sum()):,}, "
+         f"fixed {int(fixed_mask.sum()):,})")
 
     # -- 2d. Prepare training ETg --------------------------------------------
     # Start from the input ETg raster and NaN out every treatment-zone pixel
@@ -700,6 +803,17 @@ def main(study_area: str | None = None) -> None:
     baseline = np.maximum(bps_mean_full, 0.0).astype(np.float32)
     if n_neg_clipped > 0:
         _log(f"    note: {n_neg_clipped:,} pixels had negative baseline - clipped to 0.0")
+
+    # Basin-average polygons: the legacy BMM replacement.  Every pixel gets
+    # the mean of the training set (valid pixels outside all treatment zones,
+    # within the basin), overriding the BpS baseline there.  Everything
+    # downstream (adjustment, downward cap, feathering) then applies as for
+    # any other baseline fill.
+    n_bavg = int(zone_bavg.sum())
+    if n_bavg:
+        baseline[zone_bavg] = np.float32(max(global_mean, 0.0))
+        _log(f"   6b . Basin-average fill: {n_bavg:,} pixels set to the "
+             f"training mean {global_mean:.4f} ft")
     sa = cfg.STUDY_AREA_NAME   # short alias for file naming
     _write_raster(baseline, etg_prof, out_dir / f"{sa}_ETg_baseline_pred.tif")
 
@@ -741,6 +855,19 @@ def main(study_area: str | None = None) -> None:
         _log(f"    treatment pixels filled with baseline: {n_replaced:,}"
              f"  /  {n_treat_px:,}")
 
+    # -- Fixed-rate burn-in --------------------------------------------------
+    # Applied last so it wins over everything above: no model, no adjustment
+    # factor, and no downward cap (the analyst's number stands even when it
+    # is higher than the input, e.g. 4 ft/yr open water over a shrubland
+    # BpS class whose baseline is near zero).
+    n_fixed = int(fixed_mask.sum())
+    if n_fixed:
+        etg_treated[fixed_mask] = fixed_raster[fixed_mask]
+        adjusted_baseline[fixed_mask] = fixed_raster[fixed_mask]
+        fv = fixed_raster[fixed_mask]
+        _log(f"   7a . Fixed-rate burn-in: {n_fixed:,} pixels set as-is "
+             f"(min {fv.min():.3f}, max {fv.max():.3f} ft)")
+
     # -- 7b. Edge feathering (Gaussian blend OUTSIDE the treatment boundary) -
     if cfg.FEATHER_WIDTH_PX > 0:
         sigma = float(cfg.FEATHER_WIDTH_PX)
@@ -749,7 +876,14 @@ def main(study_area: str | None = None) -> None:
 
         treat_bool = treatment_zone.astype(bool)
         outside_zone = ~treat_bool
-        dist_outside = distance_transform_edt(outside_zone)
+        # Fixed-rate polygons keep a hard edge: the feather band is measured
+        # from the baseline / basin-average polygons only.  Pixels inside a
+        # fixed polygon are still in treat_bool, so they are never blended.
+        feather_seed = treat_bool & ~fixed_mask
+        if feather_seed.any():
+            dist_outside = distance_transform_edt(~feather_seed)
+        else:
+            dist_outside = np.full(grid_shape, np.inf)
 
         blend_weight = np.exp(-(dist_outside / sigma) ** 2).astype(np.float32)
         blend_weight[treat_bool] = 1.0
@@ -855,6 +989,13 @@ def main(study_area: str | None = None) -> None:
         "[treatment]",
         f"buffer_m              = {cfg.BUFFER_M}",
         f"feather_width_px      = {cfg.FEATHER_WIDTH_PX}",
+        f"attr_treat            = {attr_treat}",
+        f"attr_basin_avg        = {attr_basin_avg}",
+        f"attr_fixed            = {attr_fixed}",
+        f"polygons_baseline     = {int(is_base.sum())}",
+        f"polygons_basin_avg    = {int(is_bavg.sum())}",
+        f"polygons_fixed        = {int(is_fixed.sum())}",
+        f"fixed_rate_source     = {_fixed_src or 'none'}",
         f"baseline_adjust       = {basin_adjust}",
         f"attr_adjust           = {attr_adjust}",
         f"adjustment_active     = {'yes' if adjustment_active else 'no'}",
@@ -920,9 +1061,8 @@ def main(study_area: str | None = None) -> None:
     etg_crs_obj = etg_prof["crs"]
     if gdf_orig.crs is not None and not gdf_orig.crs.equals(etg_crs_obj):
         gdf_orig = gdf_orig.to_crs(etg_crs_obj)
-    for col in (cfg.ATTR_SCALE, cfg.ATTR_REPLACE):
-        if col in gdf_orig.columns:
-            gdf_orig[col] = gdf_orig[col].fillna(0).astype(float)
+    for col in present_treat:
+        gdf_orig[col] = gdf_orig[col].fillna(0).astype(float)
 
     # Pick a column that actually identifies a polygon.  A candidate only
     # qualifies if every value is present and distinct: ET_unit used to be
@@ -958,11 +1098,11 @@ def main(study_area: str | None = None) -> None:
         if geom is None or not geom.is_valid:
             continue
 
-        is_treated = False
-        for col in (cfg.ATTR_SCALE, cfg.ATTR_REPLACE):
-            if col in gdf_orig.columns and row.get(col, 0) > 0:
-                is_treated = True
-                break
+        # Mode and trigger were decided in step 2 on gdf (same row order,
+        # and including overrides read from the rates_adjust file).
+        mode = str(gdf["_mode"].iloc[i]) if i < len(gdf) else "none"
+        trig = str(gdf["_trigger"].iloc[i]) if i < len(gdf) else ""
+        is_treated = mode != "none"
 
         mini_mask = rasterize(
             [(geom, 1)],
@@ -987,18 +1127,28 @@ def main(study_area: str | None = None) -> None:
         # Consult gdf, not gdf_orig: overrides read from the rates_adjust
         # file are injected into gdf and never exist in the original file.
         poly_adj = basin_adjust
-        if is_treated and has_per_poly_adj and attr_adjust in gdf.columns \
-                and i < len(gdf):
+        if mode in ("baseline", "basin_avg") and has_per_poly_adj \
+                and attr_adjust in gdf.columns and i < len(gdf):
             v = gdf[attr_adjust].iloc[i]
             poly_adj_val = float(v) if v == v and v is not None else 0.0
             if poly_adj_val > 0:
                 poly_adj = poly_adj_val
 
+        fixed_val = 0.0
+        if attr_fixed and attr_fixed in gdf.columns and i < len(gdf):
+            v = gdf[attr_fixed].iloc[i]
+            fixed_val = float(v) if v == v and v is not None else 0.0
+
         rec = {
             "polygon_id": row[id_col],
             "n_pixels": n_px,
-            "treatment": "replaced" if is_treated else "none",
-            "adj_factor": round(poly_adj, 4) if is_treated else "",
+            # "baseline" (was "replaced" before 1.1.0), "basin_avg",
+            # "fixed", or "none"
+            "treatment": mode,
+            "trigger": trig,
+            "adj_factor": (round(poly_adj, 4)
+                           if mode in ("baseline", "basin_avg") else ""),
+            "fixed_rate": round(fixed_val, 4) if mode == "fixed" else "",
             "mean_input_ETg": round(mean_input, 4),
             "mean_baseline_ETg": round(mean_base, 4),
             "mean_final_ETg": round(mean_final, 4),
@@ -1027,10 +1177,15 @@ def main(study_area: str | None = None) -> None:
             "row_i": int(i),
             "poly_id": str(row[id_col])[:80],
             "treated": 1 if is_treated else 0,
+            "mode": mode,
+            "trigger": trig[:10],
             "etg_input": round(mean_input, 4),
             "etg_base": round(mean_base, 4),
             "etg_final": round(mean_final, 4),
             "adj_fctr": round(override, 4),
+            # Editable like adj_fctr: type a rate (ft/yr) here and re-run
+            # to burn it in.  Echoes the override (0 = none).
+            "fixed_rt": round(fixed_val, 4),
         }
         if legacy_col is not None:
             shp_rec["lgcy_rt"] = round(float(row.get(legacy_col, 0) or 0), 4)
@@ -1063,10 +1218,13 @@ def main(study_area: str | None = None) -> None:
             gdf_rates_out = gpd.GeoDataFrame(shp_rows, crs=gdf_orig.crs)
             gdf_rates_out.to_file(rates_shp)
             n_over = int((gdf_rates_out["adj_fctr"] > 0).sum())
+            n_fix = int((gdf_rates_out["fixed_rt"] > 0).sum())
             _log(f"  -> wrote {rates_shp.name}  ({len(gdf_rates_out)} polygons, "
-                 f"{n_over} adj_fctr override(s) carried forward)")
-            _log(f"     To tune rates: edit 'adj_fctr' in that file in QGIS "
-                 f"(0 = no override, 0.8 = cut that polygon 20%), then re-run.")
+                 f"{n_over} adj_fctr and {n_fix} fixed_rt override(s) carried "
+                 f"forward)")
+            _log(f"     To tune rates: edit 'adj_fctr' (0 = no override, 0.8 = "
+                 f"cut that polygon 20%) or 'fixed_rt' (ft/yr to burn in as-is) "
+                 f"in that file in QGIS, then re-run.")
         except Exception as e:
             _log(f"    WARNING: could not write {rates_shp.name}: {e}")
 
@@ -1086,6 +1244,10 @@ def main(study_area: str | None = None) -> None:
     _stats(etg[treat_bool],        "Treatment zones - original input")
     _stats(baseline[treat_bool],   "Treatment zones - model baseline")
     _stats(etg_final[treat_bool],  "Treatment zones - final")
+    if zone_bavg.any():
+        _stats(etg_final[zone_bavg], "  of which basin-average - final")
+    if fixed_mask.any():
+        _stats(etg_final[fixed_mask], "  of which fixed-rate - final")
 
     both_valid = np.isfinite(etg) & np.isfinite(etg_final)
     orig_sum  = float(np.sum(etg[both_valid]))

@@ -219,17 +219,18 @@ python flag_irrigated.py 053_PineValley
 It compares each polygon's mean ETg to the natural baseline of its BpS class and
 writes `<treatment>_autoflag.shp` into `source/`, next to the original shapefile
 (the `..._autoflag_report.csv` goes to `output/`), with an
-`autoflag` column (1 = looks irrigation-influenced) and per-polygon diagnostics
-(`etg_mean`, `bps_base`, `etg_ratio`, `etg_excs`, dominant BpS class).
+`suggested` column (1 = looks irrigation-influenced), an `analyst` column for
+your own call, an `autoflag` column with the result, and per-polygon
+diagnostics (`etg_mean`, `bps_base`, `etg_ratio`, `etg_excs`, dominant BpS class).
 
 Tune the sensitivity in `config.toml [flag]` (`ratio_thresh`, `min_excess_ft`,
 `baseline_pctl`) or on the command line (`--ratio`, `--min-excess`, `--pctl`).
 
-Open `<treatment>_autoflag.shp` in QGIS, review the `autoflag` values against the
-diagnostics, and edit any you disagree with - set `autoflag` to 0 to keep a
-polygon as-is, or 1 to add one the screen missed. Re-running the helper keeps
-your edits (it tracks the raw suggestion separately in `autoflag_a`); pass
-`--reset` to recompute from scratch.
+Open `<treatment>_autoflag.shp` in QGIS, review `suggested` against the
+diagnostics, and type your call into `analyst` where you disagree: 0 keeps a
+polygon as-is, 1 adds one the screen missed, -1 (the default) goes with the
+suggestion. `autoflag` is the result and is recomputed every run, so edit
+`analyst`, not `autoflag`. Re-running keeps `analyst`; pass `--reset` to clear it.
 
 To run the fill on the flags, set in `config.toml`:
 
@@ -238,11 +239,11 @@ To run the fill on the flags, set in `config.toml`:
 treatment_shp = "<treatment>_autoflag.shp"
 
 [treatment]
-attr_replace = "autoflag"
+attr_treat = ["scale_fctr", "rplc_rt", "autoflag"]
 ```
 
 or run `flag_irrigated.py ... --mirror-to rplc_rt` to copy the decision into the
-standard `rplc_rt` trigger column, which saves you the `attr_replace` line. The
+standard `rplc_rt` trigger column, which saves you the `attr_treat` line. The
 `treatment_shp` line is needed either way, because the script writes a copy and
 leaves your original shapefile untouched. Then run the fill as usual.
 

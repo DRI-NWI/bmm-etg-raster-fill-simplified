@@ -27,6 +27,11 @@ python prep_basin.py 053_PineValley
 #    and re-run the same command to fill in the two filenames:
 python prep_basin.py 053_PineValley
 
+#    If the treatment polygons are in one statewide file, let prep cut each
+#    basin's share into source/<basin_key>_treatment.shp instead:
+python prep_basin.py 053_PineValley --treatment-src "C:\path\to\NV_phreats_statewide.shp"
+python prep_basin.py --all --treatment-src "C:\path\to\NV_phreats_statewide.shp"
+
 # 3. Run fill + diagnostics + ET-unit summary.
 python etg_baseline_fill.py 053_PineValley
 python diagnostics.py 053_PineValley
@@ -55,6 +60,10 @@ python prep_custom_basin.py SierraValley --bps C:\Users\mbromley\Downloads\LF202
 # If it only covers the irrigated / phreatophyte ground, pass a real basin
 # outline instead, or the fill will have very little left to train on:
 python prep_custom_basin.py SierraValley --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp"
+
+# Treatment polygons in a statewide file: keep --boundary and add
+# --treatment-src (never pass a statewide file as --treatment):
+python prep_custom_basin.py SierraValley --bps C:\Users\mbromley\Downloads\LF2020_BPS_CONUS\Tif\LF2020_BPS_CONUS.tif --boundary "C:\path\to\Sierra_Valley_Groundwater_Basin_dissolve.shp" --treatment-src "C:\path\to\statewide_etunits.shp"
 
 # Then drop the ETg raster (and the treatment shapefile, if you used
 # --boundary) into basins/SierraValley/source/, re-run the prep command to

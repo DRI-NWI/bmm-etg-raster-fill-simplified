@@ -22,10 +22,16 @@ Usage
     # List available basin keys from the NWI shapefile:
     python prep_basin.py --list
 
+    # Also cut each basin's treatment polygons out of a statewide dataset
+    # (writes source/<basin_key>_treatment.shp and points config.toml at it):
+    python prep_basin.py --all --treatment-src C:\\data\\NV_phreats_statewide.shp
+
 Outputs
 -------
     basins/<basin_key>/
-        source/       (you drop the ETg raster + treatment shapefile here)
+        source/       (you drop the ETg raster + treatment shapefile here;
+                       with --treatment-src, <basin_key>_treatment.shp is
+                       written here for you)
         input/
             BpS.tif
             BpS.clr   (QGIS/ArcGIS symbology)
@@ -143,7 +149,8 @@ def _clip_from_statewide(
 
 
 def _generate_default_config(basin_dir: Path, basin_key: str,
-                             basin_id: str, basin_name: str):
+                             basin_id: str, basin_name: str,
+                             treatment_name: str | None = None):
     """
     Write a default config.toml for a basin.
 
@@ -151,6 +158,9 @@ def _generate_default_config(basin_dir: Path, basin_key: str,
     two ``# PLACE ...`` placeholders: once the ETg raster and treatment
     shapefile are in source/, re-running prep fills those in.  Any value you
     have set by hand stays as you left it.
+
+    ``treatment_name`` (the --treatment-src subset) takes priority over the
+    file-name scan below.
     """
     config_path = basin_dir / "config.toml"
 
@@ -173,6 +183,8 @@ def _generate_default_config(basin_dir: Path, basin_key: str,
 
     etg_tif = etg_candidates[0].name if etg_candidates else "# PLACE ETg RASTER HERE"
     treat_shp = treatment_shps[0].name if treatment_shps else "# PLACE TREATMENT SHP HERE"
+    if treatment_name:
+        treat_shp = treatment_name
 
     import basin_config as _bc
 
@@ -184,6 +196,9 @@ def _generate_default_config(basin_dir: Path, basin_key: str,
                  f"(your other edits are untouched)")
         else:
             _log("  config.toml already exists - preserving your edits")
+        if treatment_name:
+            from treatment_subset import check_config_points_at
+            check_config_points_at(config_path, treatment_name)
         return
 
     # Render the config.toml from basins/_template/config.toml.  To change
@@ -210,8 +225,13 @@ def prep_one_basin(
     gdf_nwi: gpd.GeoDataFrame,
     *,
     force: bool = False,
+    treatment_src: Path | None = None,
 ):
-    """Set up a single basin directory: clip BpS + generate config."""
+    """Set up a single basin directory: clip BpS + generate config.
+
+    With ``treatment_src`` (a statewide treatment dataset), also write this
+    basin's polygons to source/<basin_key>_treatment.shp.
+    """
     _log(f"\n{'='*60}")
     _log(f"Preparing basin: {basin_key}")
 
@@ -280,8 +300,23 @@ def prep_one_basin(
     except Exception as e:
         _log(f"    (BpS symbology skipped: {e})")
 
+    # -- Subset statewide treatment polygons (optional) ----------------------
+    treatment_name = None
+    if treatment_src is not None:
+        from treatment_subset import subset_treatment, subset_name, SubsetError
+        _log(f"  Subsetting treatment polygons from {Path(treatment_src).name} ...")
+        # Unbuffered basin polygon: only this basin's polygons, not neighbours'.
+        try:
+            t_dst = subset_treatment(treatment_src, geom, gdf_nwi.crs,
+                                     source_dir / subset_name(basin_key),
+                                     force=force)
+            treatment_name = t_dst.name
+        except SubsetError as e:
+            _log(f"  WARNING: treatment subset skipped: {e}")
+
     # -- Generate config.toml ------------------------------------------------
-    _generate_default_config(basin_dir, basin_key, basin_id, basin_name)
+    _generate_default_config(basin_dir, basin_key, basin_id, basin_name,
+                             treatment_name=treatment_name)
 
     _log(f"  Done.  Place raw ETg raster and treatment shapefile in:\n"
          f"    {source_dir.resolve()}/\n"
@@ -302,10 +337,19 @@ def main():
     parser.add_argument("--list", action="store_true",
                         help="List available basin keys and exit")
     parser.add_argument("--only-missing", action="store_true",
-                        help="With --all: skip basins that already have BpS.tif")
+                        help="With --all: skip basins that already have BpS.tif "
+                             "(and, with --treatment-src, a treatment subset)")
     parser.add_argument("--force", action="store_true",
-                        help="Rebuild BpS.tif even if it already exists.")
+                        help="Rebuild BpS.tif (and the treatment subset) even "
+                             "if it already exists.")
+    parser.add_argument("--treatment-src", type=Path, default=None,
+                        help="Statewide treatment dataset (phreatophyte + ag "
+                             "polygons).  Each basin's overlapping polygons are "
+                             "written to source/<basin_key>_treatment.shp.")
     args = parser.parse_args()
+
+    if args.treatment_src is not None and not args.treatment_src.exists():
+        sys.exit(f"ERROR: --treatment-src not found: {args.treatment_src}")
 
     gdf_nwi = _load_nwi()
 
@@ -337,9 +381,15 @@ def main():
     for key in keys:
         if args.only_missing:
             bps_path = BASINS_DIR / key / "input" / "BpS.tif"
-            if bps_path.exists():
+            done = bps_path.exists()
+            if args.treatment_src is not None:
+                from treatment_subset import subset_name
+                done = done and (BASINS_DIR / key / "source" /
+                                 subset_name(key)).exists()
+            if done:
                 continue
-        if prep_one_basin(key, gdf_nwi, force=args.force):
+        if prep_one_basin(key, gdf_nwi, force=args.force,
+                          treatment_src=args.treatment_src):
             n_ok += 1
         else:
             n_fail += 1

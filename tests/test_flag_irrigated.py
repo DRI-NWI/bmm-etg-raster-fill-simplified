@@ -9,7 +9,7 @@ block plus two natural polygons), clears any manual flags, and checks that:
   * the irrigation-inflated polygon is auto-flagged (autoflag == 1);
   * natural polygons are not flagged (autoflag == 0);
   * an analyst override (editing autoflag in the output) survives a re-run
-    while the raw machine suggestion (autoflag_a) is preserved separately.
+    while the machine suggestion ('suggested') is preserved separately.
 
 Run with:   pytest -q
 """
@@ -28,7 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CODE_FILES = [
     "basin_config.py", "bps_utils.py", "etg_baseline_fill.py",
     "diagnostics.py", "etunit_summary.py", "prep_custom_basin.py",
-    "prep_basin.py", "run_all.py", "flag_irrigated.py",
+    "prep_basin.py", "run_all.py", "flag_irrigated.py", "treatment_subset.py",
 ]
 NWI_STEM = "NWI_Investigations_EPSG_32611"
 
@@ -100,11 +100,12 @@ def flagged(tmp_path_factory):
 def test_irrigated_polygon_flagged(flagged):
     rep = _read_report(flagged["out"])
     t1 = rep["T1"]                      # the inflated "irrigated" block
-    assert int(t1["autoflag_a"]) == 1
+    assert int(t1["suggested"]) == 1
+    assert int(t1["analyst"]) == -1
     assert int(t1["autoflag"]) == 1
     assert float(t1["etg_ratio"]) >= 1.5
     assert float(t1["etg_excs"]) >= 0.3
-    assert t1["source"] == "auto"
+    assert t1["source"] == "suggested"
 
 
 def test_natural_polygons_not_flagged(flagged):
@@ -130,19 +131,91 @@ def test_class_summary_written(flagged):
     assert float(rows[dom]["pct_area_flagged"]) > 0.0
 
 
-def test_analyst_override_is_sticky(flagged):
-    """Editing autoflag in the output must survive a re-run (no --reset),
-    while the raw machine suggestion (autoflag_a) is preserved."""
+def test_analyst_column_is_sticky(flagged):
+    """A 0 or 1 typed into 'analyst' decides the result and survives a re-run;
+    'suggested' is still the machine's call."""
     work = flagged["work"]
     out_shp = flagged["source"] / "treatment_autoflag.shp"
 
     g = gpd.read_file(out_shp)
-    g.loc[g["DRI_ID"] == "T1", "autoflag"] = 0   # analyst: T1 is fine as-is
+    assert set(g["analyst"]) == {-1}, "analyst column should be seeded to -1"
+    assert "autoflag_a" not in g.columns
+    g.loc[g["DRI_ID"] == "T1", "analyst"] = 0   # analyst: T1 is fine as-is
+    g.loc[g["DRI_ID"] == "U1", "analyst"] = 1   # analyst: U1 needs treating
     g.to_file(out_shp)
 
-    _run("flag_irrigated.py", KEY, cwd=work)     # no --reset: honor overrides
+    _run("flag_irrigated.py", KEY, cwd=work)     # no --reset: keep the column
 
     rep = _read_report(flagged["out"])
-    assert int(rep["T1"]["autoflag"]) == 0, "override was not preserved"
-    assert int(rep["T1"]["autoflag_a"]) == 1, "machine suggestion should remain 1"
-    assert rep["T1"]["source"] == "analyst_override"
+    assert int(rep["T1"]["autoflag"]) == 0 and rep["T1"]["source"] == "analyst"
+    assert int(rep["T1"]["suggested"]) == 1, "machine suggestion should remain 1"
+    assert int(rep["U1"]["autoflag"]) == 1 and rep["U1"]["source"] == "analyst"
+    g2 = gpd.read_file(out_shp)
+    assert int(g2.loc[g2["DRI_ID"] == "T1", "analyst"].iloc[0]) == 0
+    assert int(g2.loc[g2["DRI_ID"] == "U1", "analyst"].iloc[0]) == 1
+    assert int(g2.loc[g2["DRI_ID"] == "T2", "analyst"].iloc[0]) == -1
+
+    # --reset clears the analyst column and the result follows the suggestion.
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)
+    rep = _read_report(flagged["out"])
+    assert int(rep["T1"]["autoflag"]) == 1 and rep["T1"]["source"] == "suggested"
+    assert int(rep["U1"]["autoflag"]) == 0
+    assert set(gpd.read_file(out_shp)["analyst"]) == {-1}
+
+
+def test_hand_edit_of_autoflag_is_rescued(flagged):
+    """Editing 'autoflag' instead of 'analyst' is the old habit.  The script
+    keeps the edit by moving it into 'analyst' and says so."""
+    work = flagged["work"]
+    out_shp = flagged["source"] / "treatment_autoflag.shp"
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)
+    g = gpd.read_file(out_shp)
+    g.loc[g["DRI_ID"] == "T1", "autoflag"] = 0
+    g.to_file(out_shp)
+    proc = _run("flag_irrigated.py", KEY, cwd=work)
+    assert "edited by hand" in proc.stdout
+    rep = _read_report(flagged["out"])
+    assert int(rep["T1"]["autoflag"]) == 0 and int(rep["T1"]["analyst"]) == 0
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)   # leave fixture clean
+
+
+def test_legacy_autoflag_a_file_is_migrated(flagged):
+    """A pre-1.1.0 output (autoflag + autoflag_a) is read once: rows where the
+    two differ become analyst values, and autoflag_a is dropped."""
+    work = flagged["work"]
+    out_shp = flagged["source"] / "treatment_autoflag.shp"
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)
+    g = gpd.read_file(out_shp).drop(columns=["analyst", "suggested"])
+    g["autoflag_a"] = g["autoflag"]
+    g.loc[g["DRI_ID"] == "T1", "autoflag"] = 0        # an old-style override
+    g.to_file(out_shp)
+    proc = _run("flag_irrigated.py", KEY, cwd=work)
+    assert "migrating pre-1.1.0" in proc.stdout
+    g2 = gpd.read_file(out_shp)
+    assert "autoflag_a" not in g2.columns
+    assert int(g2.loc[g2["DRI_ID"] == "T1", "analyst"].iloc[0]) == 0
+    assert int(g2.loc[g2["DRI_ID"] == "T1", "autoflag"].iloc[0]) == 0
+    assert int(g2.loc[g2["DRI_ID"] == "T2", "analyst"].iloc[0]) == -1
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)
+
+
+def test_manual_flag_not_mistaken_for_hand_edit(flagged):
+    """A polygon flagged by hand in the source (scale_fctr > 0) is always
+    autoflag = 1 even when suggested = 0.  A re-run must not read that gap as
+    a hand edit of autoflag, so the analyst column stays -1."""
+    work = flagged["work"]
+    src = flagged["source"] / "treatment.shp"
+    g = gpd.read_file(src)
+    g.loc[g["DRI_ID"] == "U1", "scale_fctr"] = 0.5      # natural, flagged by hand
+    g.to_file(src)
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)
+    rep = _read_report(flagged["out"])
+    assert int(rep["U1"]["suggested"]) == 0 and int(rep["U1"]["autoflag"]) == 1
+    proc = _run("flag_irrigated.py", KEY, cwd=work)      # second run, no edits
+    assert "edited by hand" not in proc.stdout
+    rep = _read_report(flagged["out"])
+    assert int(rep["U1"]["analyst"]) == -1 and rep["U1"]["source"] == "manual_flag"
+    # Restore the fixture.
+    g.loc[g["DRI_ID"] == "U1", "scale_fctr"] = 0.0
+    g.to_file(src)
+    _run("flag_irrigated.py", KEY, "--reset", cwd=work)

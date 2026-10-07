@@ -35,11 +35,21 @@ training boundary from its extent):
         --treatment /path/to/sierra_valley_etunits.shp \\
         --bps       /path/to/LF2020_BPS_CONUS.tif
 
+If the treatment polygons come from a larger (e.g. statewide) dataset, pass it
+with --treatment-src instead.  The polygons that overlap --boundary are written
+to source/<basin_key>_treatment.shp and config.toml points at that file:
+
+    python prep_custom_basin.py SierraValley \\
+        --boundary      /path/to/sierra_valley_boundary.shp \\
+        --treatment-src /path/to/statewide_etunits.shp \\
+        --bps           /path/to/LF2020_BPS_CONUS.tif
+
 Outputs
 -------
     basins/<basin_key>/
         source/
             boundary.shp     (copy of your boundary)
+            <basin_key>_treatment.shp  (only with --treatment-src)
         input/
             BpS.tif
             BpS.clr          (QGIS symbology, if bps_lookup.json exists)
@@ -238,7 +248,8 @@ def _copy_shapefile(src_shp: Path, dest_dir: Path) -> Path:
     return dest_dir / f"{stem}.shp"
 
 
-def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None):
+def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None,
+                     treatment_name: str | None = None):
     """Write a default config.toml for a custom basin.
 
     An existing config.toml is never overwritten, except that the two
@@ -265,6 +276,8 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None)
 
     etg_tif = etg_candidates[0].name if etg_candidates else "# PLACE ETg RASTER HERE"
     treat_shp = treatment_shps[0].name if treatment_shps else "# PLACE TREATMENT SHP HERE"
+    if treatment_name:
+        treat_shp = treatment_name
 
     import basin_config as _bc
 
@@ -276,6 +289,9 @@ def _generate_config(basin_dir: Path, basin_key: str, boundary_name: str | None)
                  f"(your other edits are untouched)")
         else:
             _log("  config.toml already exists - preserving your edits")
+        if treatment_name:
+            from treatment_subset import check_config_points_at
+            check_config_points_at(config_path, treatment_name)
         return
 
     # boundary_shp is optional: when not supplied, the fill derives the training
@@ -308,6 +324,7 @@ def prep_custom_basin(
     *,
     buffer_m: float = CLIP_BUFFER_M,
     force: dict | None = None,
+    treatment_src: Path | None = None,
 ):
     """
     Set up a basin directory from user-provided inputs.
@@ -327,6 +344,11 @@ def prep_custom_basin(
         and (when no ``boundary_path`` is supplied) used as the clip geometry.
     buffer_m : float
         Buffer around the area geometry for BpS clipping (meters).
+    treatment_src : Path, optional
+        A larger (e.g. statewide) treatment dataset.  Requires
+        ``boundary_path``; the polygons overlapping the boundary are written
+        to source/<basin_key>_treatment.shp.  Not combined with
+        ``treatment_path``.
 
     At least one of ``boundary_path`` / ``treatment_path`` must be supplied to
     define the clip area.
@@ -342,6 +364,12 @@ def prep_custom_basin(
     # The clip geometry comes from the boundary if given, else the treatment
     # shapefile.  (When only the treatment shapefile is supplied, it both
     # defines the area here and becomes the training boundary in the fill.)
+    if treatment_src is not None:
+        if boundary_path is None:
+            sys.exit("ERROR: --treatment-src needs --boundary; the statewide "
+                     "extent cannot define the basin area.")
+        if treatment_path is not None:
+            sys.exit("ERROR: use --treatment or --treatment-src, not both.")
     area_path = boundary_path if boundary_path is not None else treatment_path
     if area_path is None:
         sys.exit("ERROR: supply --boundary or --treatment to define the area.")
@@ -406,6 +434,18 @@ def prep_custom_basin(
         _log("  Copying treatment shapefile into source/ ...")
         t_dst = _copy_shapefile(treatment_path, source_dir)
         _log(f"    -> {t_dst.name}")
+    treatment_name = None
+    if treatment_src is not None:
+        from treatment_subset import subset_treatment, subset_name, SubsetError
+        _log(f"  Subsetting treatment polygons from {Path(treatment_src).name} ...")
+        # Unbuffered, dissolved boundary in its own CRS.
+        try:
+            t_dst = subset_treatment(treatment_src, dissolved, bnd_crs,
+                                     source_dir / subset_name(basin_key),
+                                     force=_force("treatment"))
+        except SubsetError as e:
+            sys.exit(f"ERROR: {e}")
+        treatment_name = t_dst.name
 
     # -- Clip BpS ------------------------------------------------------------
     if not bps_path.exists():
@@ -455,9 +495,10 @@ def prep_custom_basin(
         pass
 
     # -- Generate config.toml ------------------------------------------------
-    _generate_config(basin_dir, basin_key, boundary_name)
+    _generate_config(basin_dir, basin_key, boundary_name,
+                     treatment_name=treatment_name)
 
-    if treatment_path is not None:
+    if treatment_path is not None or treatment_src is not None:
         _log(f"\n  Done.  Place the raw ETg raster in:\n    {source_dir.resolve()}/\n"
              f"  (BpS and the treatment shapefile are already staged.)\n  Then run:\n"
              f"    python etg_baseline_fill.py {basin_key}")
@@ -485,18 +526,28 @@ def main():
     parser.add_argument("--treatment", type=Path, default=None,
                         help="Treatment / ET-unit shapefile. Copied into source/; "
                              "used as the clip area when --boundary is omitted.")
+    parser.add_argument("--treatment-src", type=Path, default=None,
+                        help="Larger (e.g. statewide) treatment dataset.  The "
+                             "polygons overlapping --boundary are written to "
+                             "source/<basin_key>_treatment.shp.  Needs --boundary.")
     parser.add_argument("--bps", type=Path, required=True,
                         help="BpS raster (any extent >= study area)")
     parser.add_argument("--buffer-m", type=float, default=CLIP_BUFFER_M,
                         help=f"Buffer around boundary for clipping "
                              f"(default: {CLIP_BUFFER_M} m)")
     parser.add_argument("--force", action="store_true",
-                        help="Rebuild BpS.tif even if already present")
+                        help="Rebuild BpS.tif and the treatment subset even if "
+                             "already present")
     parser.add_argument("--force-bps", action="store_true", help="Rebuild BpS.tif")
     args = parser.parse_args()
 
     if args.boundary is None and args.treatment is None:
         parser.error("supply --boundary and/or --treatment to define the area.")
+    if args.treatment_src is not None:
+        if args.boundary is None:
+            parser.error("--treatment-src needs --boundary.")
+        if args.treatment is not None:
+            parser.error("use --treatment or --treatment-src, not both.")
 
     force_dict = {
         "all": bool(args.force),
@@ -513,6 +564,7 @@ def main():
         treatment_path=args.treatment,
         buffer_m=args.buffer_m,
         force=force_dict,
+        treatment_src=args.treatment_src,
     )
 
     _log(f"\nElapsed: {time.time() - t0:.1f} s")

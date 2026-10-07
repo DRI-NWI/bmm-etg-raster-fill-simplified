@@ -32,8 +32,21 @@ CLASS_MEAN = {11: 1.4, 12: 0.9, 13: 0.6, 14: 1.1}   # base ETg per BpS class
 CRS_UTM = CRS.from_epsg(32611)
 
 
-def generate(dest: Path) -> dict:
-    """Write synthetic layers into *dest* and return their paths."""
+# Extra blocks used only when generate(..., modes=True):
+BAVG0, BAVG1 = 60, 72        # "bsnAv_flag" pivot (12x12 px), inflated like IRR
+WAT0, WAT1 = 8, 18           # "fixed_rt" open-water block (10x10 px)
+WATER_INPUT = 3.0            # what the input raster holds over the water
+WATER_FIXED = 4.0            # the rate the analyst wants burned in
+
+
+def generate(dest: Path, modes: bool = False) -> dict:
+    """Write synthetic layers into *dest* and return their paths.
+
+    With ``modes=True`` two more treatment polygons are added: B1, flagged
+    only through ``bsnAv_flag`` (basin-average fill), and W1, an open-water
+    block with ``fixed_rt`` = 4.0 whose input ETg is 3.0.  The ETg raster
+    gets the matching inflated / water blocks.
+    """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(7)
@@ -65,6 +78,9 @@ def generate(dest: Path) -> dict:
     etg = etg + grad + rng.normal(0, 0.05, (H, W)).astype(np.float32)
     etg = np.clip(etg, 0.05, None)
     etg[IRR0:IRR1, IRR0:IRR1] += 2.5      # irrigation inflation
+    if modes:
+        etg[BAVG0:BAVG1, BAVG0:BAVG1] += 2.0   # groundwater pivot in shrubland
+        etg[WAT0:WAT1, WAT0:WAT1] = WATER_INPUT
     transform = from_origin(X0, Y0, RES, RES)
     etg_path = dest / "etg.tif"
     with rasterio.open(etg_path, "w", driver="GTiff", height=H, width=W,
@@ -85,19 +101,26 @@ def generate(dest: Path) -> dict:
         return box(X0 + c0 * RES, Y0 - r1 * RES, X0 + c1 * RES, Y0 - r0 * RES)
 
     treatment_path = dest / "treatment.shp"
-    gpd.GeoDataFrame(
-        {
-            "ET_unit":    ["Cropland", "Pasture", "Phreatophyte"],
-            "scale_fctr": [0.0, 0.7, 0.0],
-            "rplc_rt":    [0.5, 0.0, 0.0],
-            "adj_fctr":   [0.9, 0.0, 0.0],
-            "DRI_ID":     ["T1", "T2", "U1"],
-        },
-        geometry=[px_poly(IRR0, IRR1, IRR0, IRR1),
-                  px_poly(12, 22, 64, 80),
-                  px_poly(70, 84, 8, 22)],
-        crs=CRS_UTM,
-    ).to_file(treatment_path)
+    attrs = {
+        "ET_unit":    ["Cropland", "Pasture", "Phreatophyte"],
+        "scale_fctr": [0.0, 0.7, 0.0],
+        "rplc_rt":    [0.5, 0.0, 0.0],
+        "adj_fctr":   [0.9, 0.0, 0.0],
+        "DRI_ID":     ["T1", "T2", "U1"],
+    }
+    geoms = [px_poly(IRR0, IRR1, IRR0, IRR1),
+             px_poly(12, 22, 64, 80),
+             px_poly(70, 84, 8, 22)]
+    if modes:
+        attrs["bsnAv_flag"] = [0, 0, 0, 1, 0]
+        attrs["fixed_rt"]   = [0.0, 0.0, 0.0, 0.0, WATER_FIXED]
+        for k in ("scale_fctr", "rplc_rt", "adj_fctr"):
+            attrs[k] += [0.0, 0.0]
+        attrs["ET_unit"] += ["Shrubland pivot", "Open water"]
+        attrs["DRI_ID"]  += ["B1", "W1"]
+        geoms += [px_poly(BAVG0, BAVG1, BAVG0, BAVG1),
+                  px_poly(WAT0, WAT1, WAT0, WAT1)]
+    gpd.GeoDataFrame(attrs, geometry=geoms, crs=CRS_UTM).to_file(treatment_path)
 
     return {
         "bps": bps_path,
@@ -105,6 +128,8 @@ def generate(dest: Path) -> dict:
         "boundary": boundary_path,
         "treatment": treatment_path,
         "irr_block": (IRR0, IRR1),
+        "bavg_block": (BAVG0, BAVG1),
+        "water_block": (WAT0, WAT1),
     }
 
 

@@ -18,7 +18,8 @@ settings people actually change, in rough order of how often:
 | `boundary_shp` | The fill warns that the training boundary is too small (custom areas where the ET-unit shapefile covers only the irrigated ground). |
 | `buffer_m` | Flood irrigation wets ground well past the field edge and those wet pixels are polluting the training set. |
 | `baseline_adjust` | Expert judgement says the modeled baseline is too high or too low across the whole basin. |
-| `attr_replace` | You want the fill to use `autoflag` from `flag_irrigated.py` instead of the hand-picked `rplc_rt` column. |
+| `attr_treat` | You want the fill to also treat on `autoflag` from `flag_irrigated.py`, or your shapefile uses different trigger column names. |
+| `attr_fixed` | Your open-water or other hand-rated polygons use a column other than `fixed_rt`, or you want the feature off (`""`). |
 | `spatial_weight_radius_px` | A class is sparse and its local means are noisy (raise it), or you want one flat value per class (set to 0). |
 
 Everything else is either filled in for you or rarely needs changing.
@@ -79,10 +80,15 @@ Controls which polygons are filled and how the edges are blended.
 |---|---|---|
 | `buffer_m` | `90.0` | Distance in meters to grow each treated polygon before masking it out of the training data. Irrigation effects bleed past field edges, and this keeps those edge pixels from teaching the model what "natural" looks like. Raise it for flood-irrigated ground; 0 turns it off. The buffered zone is also what gets filled. |
 | `feather_width_px` | `4` | Width of the blend zone just outside the treated area, in pixels (it is the sigma of a Gaussian, so the visible blend is about three times this). Prevents a hard seam between filled and untouched pixels. 4 px is about 120 m at 30 m resolution. 0 disables feathering. |
-| `attr_scale` | `"scale_fctr"` | Name of the first shapefile column that marks a polygon for treatment. Any value above 0 means "fill this polygon." |
-| `attr_replace` | `"rplc_rt"` | Name of the second column that marks a polygon for treatment, same rule. A polygon is treated if either column is above 0. `rplc_rt` is the legacy BMM hand-picked replacement rate; the value itself is not used by the model, only whether it is above 0, but it is carried into the polygon summary so you can compare it with the modeled baseline. Set this to `"autoflag"` to run the fill on the polygons flagged by `flag_irrigated.py`. |
+| `attr_treat` | `["scale_fctr", "rplc_rt"]` | List of shapefile columns that mark a polygon for the modeled baseline fill. Any value above 0 in any listed column means "fill this polygon." The values themselves are not used by the model. `rplc_rt` is the legacy BMM hand-picked replacement rate; it is carried into the polygon summary so you can compare it with the modeled baseline. Add `"autoflag"` to run the fill on the polygons flagged by `flag_irrigated.py`. Older configs with `attr_scale` / `attr_replace` instead of this list still work. |
+| `attr_basin_avg` | `"bsnAv_flag"` | Column that marks a polygon for the legacy "basin average" fill: every pixel gets the mean of all training pixels (valid pixels outside the treatment zones, within the basin). No BpS modeling. Buffer, adjustment, cap and feathering apply as for a baseline fill. Set to `""` to turn it off. |
+| `attr_fixed` | `"fixed_rt"` | Column holding a rate (ft/yr) to burn in as-is. Above 0 means "set every pixel of this polygon to this value, full stop": no model, no adjustment factor, no downward cap, no buffer, no feathering around it. Meant for open water and similar hand-assigned rates that the model has no way to reproduce. Wins over the other two columns. Set to `""` to turn it off. |
 
-To stop one polygon from being filled, set both columns to 0 for that polygon.
+Where a polygon has values in more than one column, `attr_fixed` beats
+`attr_basin_avg`, which beats `attr_treat`. The polygon summary's `treatment`
+and `trigger` columns show which one applied.
+
+To stop one polygon from being filled, set all its trigger columns to 0.
 It moves to the untouched group. Its edge pixels can still be pulled down a
 little by feathering from a treated neighbour.
 
@@ -99,10 +105,10 @@ factor above 1.0 can only take effect where the baseline is below the input.
 | `attr_adjust` | `"adj_fctr"` | Name of an optional shapefile column that overrides `baseline_adjust` polygon by polygon. A value of 0 (or a missing column) means "use the basin-wide value." `0.5` halves that polygon's baseline. |
 
 You do not need to add the column yourself. Every run writes
-`<basin_key>_rates_adjust.shp` next to the treatment shapefile with an
-`adj_fctr` column already in it. Edit that column in QGIS and re-run; the fill
-picks it up. If the treatment shapefile itself has an `adj_fctr` column with
-any value above 0, that column wins and the review file is ignored.
+`<basin_key>_rates_adjust.shp` next to the treatment shapefile with `adj_fctr`
+and `fixed_rt` columns already in it. Edit either in QGIS and re-run; the fill
+picks them up. If the treatment shapefile itself has that column with any value
+above 0, the shapefile wins and the review file is ignored for that column.
 
 ## `[baseline]`
 
@@ -125,9 +131,11 @@ flagged when both tests pass. Command-line options (`--ratio`, `--min-excess`,
 | `min_excess_ft` | `0.3` | And the polygon's mean ETg is at least this many feet per year above that baseline. Stops tiny absolute differences on low-ETg classes from being flagged. |
 | `baseline_pctl` | `50.0` | Which percentile of in-basin ETg, per BpS class, counts as the "natural" baseline for the flag test. 50 is the median. Lower it (30 to 40) when the script warns that a class is mostly inside flagged polygons, because then the median itself is irrigation-inflated. |
 
-The decision is always written to an `autoflag` column (0 or 1) on a copy of
-the treatment shapefile. Edit it in QGIS where you disagree; edits survive
-re-runs unless you pass `--reset`.
+The script writes three columns to a copy of the treatment shapefile:
+`suggested` (the machine's call, recomputed every run), `analyst` (yours: -1 =
+go with the suggestion, 0 = leave, 1 = treat; the only column to edit) and
+`autoflag` (the result the fill triggers on, recomputed every run). `analyst`
+survives re-runs unless you pass `--reset`.
 
 ## `[crs_overrides]`
 

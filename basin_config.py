@@ -58,6 +58,9 @@ CRS_OVERRIDES   = {}
 # Treatment
 ATTR_SCALE       = "scale_fctr"
 ATTR_REPLACE     = "rplc_rt"
+ATTR_TREAT       = ["scale_fctr", "rplc_rt"]   # any value > 0 marks a polygon
+ATTR_BASIN_AVG   = "bsnAv_flag"  # > 0: fill with the basin-wide training mean
+ATTR_FIXED       = "fixed_rt"    # > 0: burn this rate (ft/yr) in as-is
 BUFFER_M         = 90.0
 FEATHER_WIDTH_PX = 4
 
@@ -188,6 +191,19 @@ def load_basin_from_toml(toml_path: Path) -> None:
     g["FEATHER_WIDTH_PX"] = int(treat.get("feather_width_px", 4))
     g["ATTR_SCALE"]       = treat.get("attr_scale", "scale_fctr")
     g["ATTR_REPLACE"]     = treat.get("attr_replace", "rplc_rt")
+    # attr_treat (a list) supersedes the two legacy keys.  Older configs that
+    # only have attr_scale / attr_replace keep working: the list is built
+    # from them.  A bare string is accepted as a one-item list.
+    attr_treat = treat.get("attr_treat")
+    if attr_treat is None:
+        attr_treat = [g["ATTR_SCALE"], g["ATTR_REPLACE"]]
+    elif isinstance(attr_treat, str):
+        attr_treat = [attr_treat]
+    g["ATTR_TREAT"] = [str(c) for c in attr_treat if c and str(c).strip()]
+    # Two optional columns that select a different fill for a polygon.
+    # An empty string turns the feature off.
+    g["ATTR_BASIN_AVG"] = str(treat.get("attr_basin_avg", "bsnAv_flag") or "")
+    g["ATTR_FIXED"]     = str(treat.get("attr_fixed", "fixed_rt") or "")
 
     # -- Expert adjustment parameters ---------------------------------------
     adj = raw.get("adjustment", {})
