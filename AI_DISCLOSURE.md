@@ -35,6 +35,12 @@ BpS-class baseline. See CHANGELOG.md for the full rationale.
 - Decided to constrain training data to within-basin pixels only.
 - Decided feathering should occur outside the treatment boundary.
 - Designed the expert adjustment knob (basin-wide default + per-polygon override).
+- Specified the three treatment modes (modeled baseline, legacy basin-average
+  replacement, and burned-in fixed rates) and their precedence, based on
+  analyst feedback from basin runs; decided fixed-rate polygons get no buffer
+  or feathering.
+- Decided that the auto-flagger's analyst decisions should be an explicit
+  column rather than inferred from edits.
 - Designed the statewide scaling architecture (per-basin configs, NWI basin
   boundaries, directory structure).
 - Validated outputs against domain knowledge and prior results.
@@ -57,6 +63,11 @@ BpS-class baseline. See CHANGELOG.md for the full rationale.
 - Performed the simplification refactor: removed the ML model, terrain and
   ancillary covariates (DEM, slope, WTD, HAND, REM, soil), and the associated
   download / derivation scripts, under human direction.
+- Implemented the basin-average and fixed-rate treatment modes, the
+  `attr_treat` trigger list, the `fixed_rt` round-trip through the rates
+  review shapefile, statewide treatment-dataset subsetting
+  (`treatment_subset.py`), and the explicit `analyst` column in
+  `flag_irrigated.py`, with tests for each.
 - Drafted documentation and this disclosure.
 
 ## Development process
@@ -79,7 +90,7 @@ the AI was used only during development.
 
 ## Model and version
 
-- AI model: Claude (Anthropic), Opus class
+- AI model: Claude (Anthropic), Opus and Fable classes
 - Development period: 2026
 - The AI has no access to the runtime environment and does not influence results
   after the code is written

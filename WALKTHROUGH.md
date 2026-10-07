@@ -88,7 +88,11 @@ Drop two files into `basins/053_PineValley/source/`:
 
 - Your ETg raster (ft/yr), e.g. `PineValley_etg_median.tif`. This defines the output
   grid.
-- Your treatment shapefile with `scale_fctr` and/or `rplc_rt` attribute columns.
+- Your treatment shapefile. A polygon is treated when any of these numeric
+  columns is above 0: `scale_fctr` or `rplc_rt` (modeled fill), `bsnAv_flag`
+  (basin-average fill), or `fixed_rt` (a rate burned in as-is). Column names
+  can be changed in `config.toml`; see [ADJUSTING_RATES.md](ADJUSTING_RATES.md)
+  for what each one does.
 
 Then re-run `python prep_basin.py 053_PineValley`. It fills in the two
 `# PLACE ...` placeholders with the filenames it detects, and changes nothing
@@ -135,6 +139,9 @@ python etg_baseline_fill.py 053_PineValley
 
 Watch the log. Key things to confirm:
 
+- The `polygons:` line under step 2 and the three mode counts beneath it
+  (`baseline fill`, `basin average`, `fixed rate`) match what you expect from
+  the shapefile. A column that is absent is reported as such.
 - `valid training pixels` is comfortably above the 50-pixel minimum. For a
   basin the size of Pine Valley, expect six figures; a few thousand means the
   training boundary is wrong.
@@ -174,12 +181,17 @@ Open `053_PineValley_ETg_final.tif` and the diagnostic PNGs in QGIS. Look for:
   fall back to the basin-wide or global mean.
 - Edge artefacts around treatment polygons (the feather map helps here).
 
-If a polygon's baseline needs tuning, use the expert adjustment knob.
+If a polygon's baseline needs tuning, use the expert adjustment knob. If it
+needs a specific number (open water, say), burn one in with `fixed_rt`.
+`output/{basin_key}_polygon_summary.csv` says how each polygon was handled
+(`treatment` and `trigger` columns).
 
 
 ## 10. Expert adjustment
 
-The baseline can be scaled up or down based on professional judgment.
+The baseline can be scaled up or down based on professional judgment, or
+replaced outright with a number you supply. For a plain-language walk through
+every editable column, see [ADJUSTING_RATES.md](ADJUSTING_RATES.md).
 
 ### Option A: adjust single polygons via the rates file
 
@@ -201,6 +213,14 @@ present.
 
 The adjustment is applied before feathering, and the downward-only cap still
 applies: an adjusted baseline is never allowed to exceed the original input ETg.
+
+### Option C: burn in a fixed rate
+
+For a polygon whose rate you already know, type it into the `fixed_rt` column
+of the same `{basin_key}_rates_adjust.shp` (or add a `fixed_rt` column to the
+treatment shapefile) and re-run. That value is written in as-is: no model, no
+adjustment factor, no cap, no buffer, no feathering. It is the only override
+that can raise a polygon above its input.
 
 Document your reasoning (a note in the basin folder, or a commit message) so the
 adjustment is reproducible.

@@ -250,19 +250,20 @@ dropped here:
 [18:04:38]   -> wrote 053_PineValley_autoflag_class_summary.csv
 ...
 [18:04:38]   polygons total          : 152
-[18:04:38]   suggested by thresholds : 8
-[18:04:38]   already flagged by hand : 100
+[18:04:38]   suggested by thresholds : 7
+[18:04:38]   already flagged by hand : 110
 [18:04:38]   decided by analyst col  : 0
-[18:04:38]   FLAGGED for treatment   : 108  (autoflag = 1)
+[18:04:38]   FLAGGED for treatment   : 117  (autoflag = 1)
 [18:04:38]   WARNING: BpS 11 (Open Water) has 86% of its in-basin area inside flagged polygons - its p50
            baseline may be irrigation-inflated and cause under-flagging.
-[18:04:38]   WARNING: BpS 1074 (Inter-Mountain Basins Montane Riparian Systems) has 57% ...
+[18:04:38]   WARNING: BpS 1074 (Inter-Mountain Basins Montane Riparian Systems) has 58% ...
 ```
 
 **Checkpoint.** A new shapefile,
 `NV_phreats_MASTER_v11_PineValley_053_w_ag_autoflag.shp`, sits in `source/`
 next to your original, which is untouched. The two CSVs are in `output/`. On
-Pine Valley the flagger carries the 100 existing manual picks and adds 8 more.
+Pine Valley the flagger carries the 110 existing hand picks (100 via
+`scale_fctr` / `rplc_rt`, 10 via `bsnAv_flag`) and suggests 7 more.
 
 Both warnings are expected on Pine Valley. When most of a class sits inside
 flagged polygons, its median is pulled up by the irrigated pixels, so the
@@ -298,7 +299,8 @@ Two things to keep straight:
 
 - Keep `treatment_shp` on your **original** while you are still iterating on
   flags. If it points at the copy and you re-run the flagger, you get
-  `..._autoflag_autoflag.shp` and the edit-tracking looks in the wrong place.
+  `..._autoflag_autoflag.shp` and the `analyst` column is read from the wrong
+  file.
   Switch to the copy only when you are ready to run the fill.
 - Flagging decides **which** polygons are filled. It does not decide the fill
   value. Rate tuning happens after the fill, in
@@ -325,92 +327,108 @@ The console output. The same run is also written to
 later, at step 1:
 
 ```
-[17:52:57] === Study area: 053_PineValley ===
-[17:52:57] 1 . Reading ETg raster (template grid) ...
-[17:52:57]     shape=(2853, 970)  CRS=EPSG:32611  valid px=213,442
-[17:52:57] 2 . Rasterizing treatment zones ...
-[17:52:57]     polygons:  100 treatment  |  52 untouched
-[17:52:57]     buffering treatment polygons by 90.0 CRS-units
-[17:52:57]    2b . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
-[17:52:57]         To tune single polygons, edit the 'adj_fctr' column in 053_PineValley_rates_adjust.shp (written to the treatment shapefile's folder at the end of this run; 0 = no override, 0.8 = cut that polygon's baseline 20%) and re-run.
-[17:52:57]   -> wrote treatment_zone.tif  (970x2853)
-[17:52:57]     treatment-zone pixels: 49,592
-[17:52:57]    2d . Building training ETg (NaN-ing all treatment pixels) ...
-[17:52:57]     masked 49,592 treatment-zone pixels as NaN
-[17:52:57] 3 . Matching BpS to ETg grid ...
-[17:52:57]   -> matched BpS.tif -> BpS_matched.tif
-[17:52:57]   4 . Rasterizing basin boundary (NWI) for training mask ...
-[17:52:57]     basin boundary pixels: 2,138,982
-[17:52:57] 5 . Assembling training data ...
-[17:52:57]     basin boundary filter: 165,828 -> 165,811 (17 out-of-basin pixels excluded)
-[17:52:57]     valid training pixels: 165,811
-[17:52:57]    5a . Computing per-BpS mean ETg ...
-[17:52:57]     BpS classes in training data: 15
-[17:52:57]       Rocky Mountain Aspen Forest and Woodland            code=1048    mean=1.4787 ft  std=0.3885  n=35
-[17:52:57]       Inter-Mountain Basins Semi-Desert Grassland         code=1071    mean=0.9935 ft  std=0.2219  n=13
-[17:52:57]       Inter-Mountain Basins Montane Sagebrush Steppe      code=1069    mean=0.9293 ft  std=0.3577  n=61
-[17:52:57]       Open Water                                          code=11      mean=0.8942 ft  std=0.4261  n=26
-[17:52:57]       Inter-Mountain Basins Montane Riparian Systems      code=1074    mean=0.8132 ft  std=0.3924  n=12,398
-[17:52:57]       Great Basin Pinyon-Juniper Woodland                 code=1050    mean=0.7222 ft  std=0.1141  n=4
-[17:52:57]       Great Basin Xeric Mixed Sagebrush Shrubland         code=1060    mean=0.6941 ft  std=0.1789  n=2,808
-[17:52:57]       Inter-Mountain Basins Semi-Desert Shrub-Steppe      code=1070    mean=0.6111 ft  std=0.1715  n=212
-[17:52:57]       Inter-Mountain Basins Big Sagebrush Shrubland-Upland  code=2703    mean=0.5920 ft  std=0.1842  n=52,069
-[17:52:57]       Inter-Mountain Basins Big Sagebrush Steppe          code=1068    mean=0.5282 ft  std=0.1490  n=25,116
-[17:52:57]       Inter-Mountain Basins Mixed Salt Desert Scrub       code=1062    mean=0.5098 ft  std=0.1694  n=4,146
-[17:52:57]       Inter-Mountain Basins Big Sagebrush Shrubland-Semi-Desert  code=2702    mean=0.5056 ft  std=0.1284  n=7,098
-[17:52:57]       Inter-Mountain Basins Greasewood Flat               code=1073    mean=0.4992 ft  std=0.1499  n=58,918
-[17:52:57]       Inter-Mountain Basins Sparsely Vegetated Systems    code=1045    mean=0.4028 ft  std=0.2087  n=1,762
-[17:52:57]       Barren-Rock/Sand/Clay                               code=31      mean=0.2487 ft  std=0.0663  n=1,145
-[17:52:57] 6 . Predicting baseline ETg (spatially weighted per-BpS mean) ...
-[17:52:57]    6a . Spatially weighted BpS means (radius = 33 px ~ 990 m) ...
-[17:53:04]     baseline BpS-mean range: 0.1509 - 1.9094 ft
-[17:53:04]   -> wrote 053_PineValley_ETg_baseline_pred.tif  (970x2853)
-[17:53:04] 7 . Building final ETg raster ...
-[17:53:04]     downward-only cap applied to 6,052 pixels (baseline exceeded original input ETg)
-[17:53:04]     treatment pixels filled with baseline: 49,592  /  49,592
-[17:53:04]    7b . Gaussian feathering OUTSIDE treatment boundary (sigma=4 px, ~120 m) ...
-[17:53:04]     irrigation-pull guard: 10,791 feather pixels had raw > baseline and were clipped in the blend
-[17:53:04]     feather-band pixels (partial blend outside boundary): 48,111
-[17:53:04]   -> wrote feather_weight.tif  (970x2853)
-[17:53:04]     extent mask applied: 1,978 pixels outside original ETg extent set back to nodata
-[17:53:04]   -> wrote 053_PineValley_ETg_final.tif  (970x2853)
-[17:53:04]    7d . Computing per-pixel percent change (input -> final) ...
-[17:53:04]   -> wrote 053_PineValley_ETg_pct_change.tif  (970x2853)
-[17:53:04]     treatment-zone % change - mean: -35.8%  median: -37.6%  p10: -65.3%  p90: +0.0%
-[17:53:06]   -> wrote diag_pct_change_map.png
-[17:53:06]    7e . Writing run metadata ...
-[17:53:06]   -> wrote 053_PineValley_run_metadata.txt
-[17:53:06] 8 . Computing per-polygon summary ...
-[17:53:06]     polygon_id = shapefile row number (no unique ID column found; add DRI_ID or UniqueID to label rows with your own IDs)
-[17:53:08]   -> wrote 053_PineValley_polygon_summary.csv  (151 polygons)
-[17:53:08] -- Summary -----------------------------------------
-[17:53:08]   Outside treatment (training)              n= 165,828  mean=0.558  med=0.502  std=0.211
-[17:53:08]   Treatment zones - original input          n=  47,614  mean=1.372  med=1.319  std=0.602
-[17:53:08]   Treatment zones - model baseline          n=  49,592  mean=0.791  med=0.729  std=0.272
-[17:53:08]   Treatment zones - final                   n=  47,614  mean=0.777  med=0.716  std=0.277
-[17:53:08]   Total ETg volume change vs original input: -18.80%  (over 213,442 pixels valid in both rasters)
-[17:53:08]   Treatment-zone ETg volume change:       -43.40%  (over 47,614 treatment pixels)
-[17:53:08]   Elapsed: 11.1 s
-[17:53:08] Done.  Outputs in:  ...\basins\053_PineValley\output
+[15:43:13] === Study area: 053_PineValley ===
+[15:43:13] 1 . Reading ETg raster (template grid) ...
+[15:43:14]     shape=(2853, 970)  CRS=EPSG:32611  valid px=213,442
+[15:43:14] 2 . Rasterizing treatment zones ...
+[15:43:14]     polygons:  110 treatment  |  42 untouched
+[15:43:14]       baseline fill (scale_fctr, rplc_rt): 100
+[15:43:14]       basin average ('bsnAv_flag'): 10
+[15:43:14]       fixed rate ('fixed_rt'): 0   (column absent)
+[15:43:14]     buffering baseline / basin-average polygons by 90.0 CRS-units
+[15:43:14]    2c . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
+[15:43:14]         To tune single polygons, edit the 'adj_fctr' column in 053_PineValley_rates_adjust.shp (written to the treatment shapefile's folder at the end of this run; 0 = no override, 0.8 = cut that polygon's baseline 20%) and re-run.
+[15:43:14]   -> wrote treatment_zone.tif  (970x2853)
+[15:43:14]     treatment-zone pixels: 52,616  (baseline 49,333, basin-average 3,283, fixed 0)
+[15:43:14]    2d . Building training ETg (NaN-ing all treatment pixels) ...
+[15:43:14]     masked 52,616 treatment-zone pixels as NaN
+[15:43:14] 3 . Matching BpS to ETg grid ...
+[15:43:14]   -> matched BpS.tif -> BpS_matched.tif
+[15:43:14]   4 . Rasterizing basin boundary (NWI) for training mask ...
+[15:43:14]     basin boundary pixels: 2,138,982
+[15:43:14] 5 . Assembling training data ...
+[15:43:14]     basin boundary filter: 163,015 -> 162,998 (17 out-of-basin pixels excluded)
+[15:43:14]     valid training pixels: 162,998
+[15:43:14]    5a . Computing per-BpS mean ETg ...
+[15:43:14]     BpS classes in training data: 15
+[15:43:14]       Rocky Mountain Aspen Forest and Woodland            code=1048    mean=1.4787 ft  std=0.3885  n=35
+[15:43:14]       Inter-Mountain Basins Semi-Desert Grassland         code=1071    mean=0.9935 ft  std=0.2219  n=13
+[15:43:14]       Inter-Mountain Basins Montane Sagebrush Steppe      code=1069    mean=0.9293 ft  std=0.3577  n=61
+[15:43:14]       Open Water                                          code=11      mean=0.8942 ft  std=0.4261  n=26
+[15:43:14]       Inter-Mountain Basins Montane Riparian Systems      code=1074    mean=0.8075 ft  std=0.3987  n=11,844
+[15:43:14]       Great Basin Xeric Mixed Sagebrush Shrubland         code=1060    mean=0.6941 ft  std=0.1789  n=2,808
+[15:43:14]       Great Basin Pinyon-Juniper Woodland                 code=1050    mean=0.6764 ft  std=0.0948  n=3
+[15:43:14]       Inter-Mountain Basins Big Sagebrush Shrubland-Upland  code=2703    mean=0.5908 ft  std=0.1836  n=51,579
+[15:43:14]       Inter-Mountain Basins Semi-Desert Shrub-Steppe      code=1070    mean=0.5834 ft  std=0.1609  n=186
+[15:43:14]       Inter-Mountain Basins Big Sagebrush Steppe          code=1068    mean=0.5270 ft  std=0.1485  n=24,762
+[15:43:14]       Inter-Mountain Basins Mixed Salt Desert Scrub       code=1062    mean=0.5086 ft  std=0.1684  n=4,127
+[15:43:14]       Inter-Mountain Basins Big Sagebrush Shrubland-Semi-Desert  code=2702    mean=0.5056 ft  std=0.1284  n=7,098
+[15:43:14]       Inter-Mountain Basins Greasewood Flat               code=1073    mean=0.4924 ft  std=0.1420  n=57,551
+[15:43:14]       Inter-Mountain Basins Sparsely Vegetated Systems    code=1045    mean=0.4026 ft  std=0.2085  n=1,761
+[15:43:14]       Barren-Rock/Sand/Clay                               code=31      mean=0.2486 ft  std=0.0662  n=1,144
+[15:43:14] 6 . Predicting baseline ETg (spatially weighted per-BpS mean) ...
+[15:43:14]    6a . Spatially weighted BpS means (radius = 33 px ~ 990 m) ...
+[15:43:20]     baseline BpS-mean range: 0.1509 - 1.9094 ft
+[15:43:20]    6b . Basin-average fill: 3,283 pixels set to the training mean 0.5541 ft
+[15:43:20]   -> wrote 053_PineValley_ETg_baseline_pred.tif  (970x2853)
+[15:43:20] 7 . Building final ETg raster ...
+[15:43:20]     downward-only cap applied to 6,444 pixels (baseline exceeded original input ETg)
+[15:43:20]     treatment pixels filled with baseline: 52,616  /  52,616
+[15:43:20]    7b . Gaussian feathering OUTSIDE treatment boundary (sigma=4 px, ~120 m) ...
+[15:43:20]     irrigation-pull guard: 11,124 feather pixels had raw > baseline and were clipped in the blend
+[15:43:20]     feather-band pixels (partial blend outside boundary): 50,527
+[15:43:20]   -> wrote feather_weight.tif  (970x2853)
+[15:43:20]     extent mask applied: 2,189 pixels outside original ETg extent set back to nodata
+[15:43:20]   -> wrote 053_PineValley_ETg_final.tif  (970x2853)
+[15:43:20]    7d . Computing per-pixel percent change (input -> final) ...
+[15:43:20]   -> wrote 053_PineValley_ETg_pct_change.tif  (970x2853)
+[15:43:20]     treatment-zone % change - mean: -35.3%  median: -36.8%  p10: -65.2%  p90: +0.0%
+[15:43:21]   -> wrote diag_pct_change_map.png
+[15:43:21]    7e . Writing run metadata ...
+[15:43:21]   -> wrote 053_PineValley_run_metadata.txt
+[15:43:21] 8 . Computing per-polygon summary ...
+[15:43:21]     polygon_id = shapefile row number (no unique ID column found; add DRI_ID or UniqueID to label rows with your own IDs)
+[15:43:22]   -> wrote 053_PineValley_polygon_summary.csv  (151 polygons)
+[15:43:22]   -> wrote 053_PineValley_rates_adjust.shp  (151 polygons, 0 adj_fctr and 0 fixed_rt override(s) carried forward)
+[15:43:22]      To tune rates: edit 'adj_fctr' (0 = no override, 0.8 = cut that polygon 20%) or 'fixed_rt' (ft/yr to burn in as-is) in that file in QGIS, then re-run.
+[15:43:22] -- Summary -----------------------------------------
+[15:43:23]   Outside treatment (training)              n= 163,015  mean=0.554  med=0.499  std=0.209
+[15:43:23]   Treatment zones - original input          n=  50,427  mean=1.339  med=1.247  std=0.603
+[15:43:23]   Treatment zones - model baseline          n=  52,616  mean=0.776  med=0.709  std=0.274
+[15:43:23]   Treatment zones - final                   n=  50,427  mean=0.763  med=0.693  std=0.279
+[15:43:23]     of which basin-average - final          n=   3,066  mean=0.544  med=0.554  std=0.032
+[15:43:23]   Total ETg volume change vs original input: -19.25%  (over 213,442 pixels valid in both rasters)
+[15:43:23]   Treatment-zone ETg volume change:       -43.05%  (over 50,427 treatment pixels)
+[15:43:23]   Elapsed: 9.1 s
+[15:43:23] Done.  Outputs in:  ...\basins\053_PineValley\output
 ```
 
-**Read this, don't just watch it scroll.** Four things tell you the run is sane:
+**Read this, don't just watch it scroll.** Five things tell you the run is sane:
 
-1. **`valid training pixels: 165,811`.** Six figures for a basin this size. A
+1. **`polygons:  110 treatment  |  42 untouched`, broken out by mode.** 100
+   polygons carry `scale_fctr` or `rplc_rt` and get the modeled fill; 10
+   cropland polygons carry only `bsnAv_flag` and get the basin-average fill
+   (step `6b`, every pixel set to the training mean, 0.5541 ft). No
+   `fixed_rt` column exists in this shapefile, so that line reads 0. Before
+   1.1.0 those 10 were silently left untouched; if you see `100 treatment |
+   52 untouched`, you are on old code.
+2. **`valid training pixels: 162,998`.** Six figures for a basin this size. A
    few thousand means the training boundary is wrong.
-2. **The class table is ordered sensibly.** Aspen and riparian at the top near
+3. **The class table is ordered sensibly.** Aspen and riparian at the top near
    1.5 and 0.8 ft, greasewood and sagebrush around 0.5, barren at the bottom
    at 0.25. If riparian came in below sagebrush, something is misaligned.
-3. **Treatment-zone mean drops from 1.372 to 0.777 ft.** The irrigation signal
-   is gone and what's left sits just above the 0.558 ft basin-wide natural
+4. **Treatment-zone mean drops from 1.339 to 0.763 ft.** The irrigation signal
+   is gone and what's left sits just above the 0.554 ft basin-wide natural
    mean, which is what you'd expect for ground that is wetter than average
-   even without irrigation.
-4. **Treatment-zone volume change is negative, -43.40%.** A positive number
+   even without irrigation. The `of which basin-average` line shows the 10
+   flat-filled polygons landing on the training mean, as they should.
+5. **Treatment-zone volume change is negative, -43.05%.** A positive number
    means the fill added water, which the downward-only cap should make
-   impossible.
+   impossible for modeled and basin-average fills (a `fixed_rt` polygon is the
+   one thing that can raise it).
 
 Watch for a class with a tiny `n`. `Great Basin Pinyon-Juniper Woodland` has
-`n=4` training pixels here, so its 0.7222 ft mean carries no weight. That is
+`n=3` training pixels here, so its 0.6764 ft mean carries no weight. That is
 worth knowing but not worth fixing; the Gaussian window pulls from neighbours.
 
 **Checkpoint.** `output/` now holds six rasters (`treatment_zone.tif`,
@@ -444,10 +462,10 @@ Plotting feather weight map ...
   -> ...\output\053_PineValley_diag_feather_map.png
 
 -- Distribution summary ------------------------------
-  Outside treatment                    n= 165,828  mean=0.558  med=0.502  p10=0.376  p90=0.810
-  Treatment zones - original           n=  47,614  mean=1.372  med=1.319  p10=0.607  p90=2.198
-  Treatment zones - baseline pred      n=  49,592  mean=0.791  med=0.729  p10=0.499  p90=1.234
-  Treatment zones - final              n=  47,614  mean=0.777  med=0.716  p10=0.486  p90=1.217
+  Outside treatment                    n= 163,015  mean=0.554  med=0.499  p10=0.374  p90=0.799
+  Treatment zones - original           n=  50,427  mean=1.339  med=1.247  p10=0.597  p90=2.185
+  Treatment zones - baseline pred      n=  52,616  mean=0.776  med=0.709  p10=0.503  p90=1.226
+  Treatment zones - final              n=  50,427  mean=0.763  med=0.693  p10=0.488  p90=1.208
 ```
 
 Seven PNGs. The eighth in the folder,
@@ -477,11 +495,11 @@ Wrote ...\output\053_PineValley_ETUNIT_SUMMARY.csv
 -- Modeled ET Unit Summary --------------------------------------
   ET Unit                           Area (ac)   Vol (acft)  Rate (ft)       Low      High
   --------------------------------------------------------------------------------------
-  Irrigated Cropland                  5682.63      4914.54     0.8648    0.5802    1.1494
-  Meadow                              2462.36      1840.29     0.7474    0.4871    1.0077
-  Phreatophyte Shrubland             36248.14     19892.83     0.5488    0.3593    0.7383
-  Riparian                             779.27       683.57     0.8772    0.5771    1.1772
-  TOTAL                              45172.40     27331.23
+  Irrigated Cropland                  5682.63      4807.60     0.8460    0.5475    1.1445
+  Meadow                              2462.36      1840.27     0.7474    0.4870    1.0077
+  Phreatophyte Shrubland             36248.14     19850.70     0.5476    0.3590    0.7363
+  Riparian                             779.27       676.74     0.8684    0.5639    1.1730
+  TOTAL                              45172.40     27175.31
 ```
 
 `Low` and `High` are the mean plus or minus one standard deviation of the
@@ -499,7 +517,9 @@ Load these four, in this order:
 1. `output/053_PineValley_ETg_final.tif` (the product)
 2. `output/053_PineValley_ETg_pct_change.tif` (styled diverging, centred on 0)
 3. `input/BpS.tif` (should already carry LANDFIRE colours and names)
-4. `source/NV_phreats_MASTER_v11_PineValley_053_w_ag.shp` (outlines)
+4. `source/053_PineValley_rates_adjust.shp` (outlines, with `mode`, `trigger`
+   and this run's rates per polygon; style by `mode` to see the 10
+   basin-average polygons against the 100 modeled ones)
 
 Then check three things against the diagnostic PNGs:
 
@@ -526,7 +546,7 @@ Four files carry the modeled rates, at increasing aggregation:
 |---|---|---|
 | `{key}_ETg_baseline_pred.tif` | per pixel | the modeled natural rate everywhere in the basin |
 | `{key}_ETg_final.tif` | per pixel | the deliverable: raw ETg with treatment zones replaced |
-| `{key}_polygon_summary.csv` | per polygon | `mean_baseline_ETg` |
+| `{key}_polygon_summary.csv` | per polygon | `mean_baseline_ETg`; `treatment` and `trigger` say how each polygon was filled and which column chose it |
 | `{key}_ETUNIT_SUMMARY.csv` | per ET unit | `ETg Rate (ft)`, with low and high |
 
 `run_metadata.txt` holds the per-vegetation-class rates the whole thing is
@@ -539,8 +559,8 @@ the summary also reports it plus the difference, so old and new sit side by
 side:
 
 ```
-polygon_id,n_pixels,treatment,adj_factor,mean_input_ETg,mean_baseline_ETg,mean_final_ETg,legacy_rplc_rt,baseline_minus_legacy,ET_unit
-130,813,replaced,1.0,1.7806,0.8187,0.8187,1.5,-0.6813,cropland
+polygon_id,n_pixels,treatment,trigger,adj_factor,fixed_rate,mean_input_ETg,mean_baseline_ETg,mean_final_ETg,legacy_rplc_rt,baseline_minus_legacy,ET_unit
+130,813,baseline,rplc_rt,1.0,,1.7806,0.8204,0.8204,1.5,-0.6796,cropland
 ```
 
 On Pine Valley, 61 treated polygons carry a legacy rate. Basin totals agree
@@ -575,8 +595,9 @@ always confirm which file was actually used:
 treatment_shp = ...\basins\053_PineValley\source\NV_phreats_MASTER_v11_PineValley_053_w_ag.shp
 ```
 
-There are two ways to change the rates. Start with whichever matches the
-scope of your disagreement.
+There are three ways to change the rates. Start with whichever matches the
+scope of your disagreement: the whole basin (A), one polygon's modeled rate
+(B), or a number you already know (C).
 
 ### Option A: scale the whole basin (no shapefile editing)
 
@@ -631,20 +652,43 @@ burned-in polygon, which is the point.
 The old route still works too: add `adj_fctr` to the treatment shapefile
 itself (rename via `[adjustment] attr_adjust`).
 
+### Option C: burn in a rate you already know
+
+Sometimes the model has no business deciding. Pine Valley's open water is the
+usual example: LANDFIRE classes it as the surrounding shrubland, so the modeled
+rate comes out near the shrubland mean and the downward-only cap then keeps
+whichever is lower. If you know the rate, type it into `fixed_rt` in the same
+`053_PineValley_rates_adjust.shp` (or add a `fixed_rt` column to the master
+shapefile) and re-run:
+
+| `fixed_rt` | Effect on that polygon |
+|---|---|
+| `0` (the seeded value) | no override |
+| `4.0` | every pixel set to 4.0 ft/yr, full stop |
+
+Nothing else touches a fixed polygon: no `adj_fctr`, no `baseline_adjust`, no
+cap, no 90 m buffer, and no feathering at its edge. The log reports it under
+`7a . Fixed-rate burn-in`, the polygon summary says `treatment = fixed`, and
+`mean_baseline_ETg` still shows what the model would have given, so the two
+can be compared. A `fixed_rt` beats `bsnAv_flag`, which beats `scale_fctr` /
+`rplc_rt`, if a polygon has more than one set.
+
 ### Confirming it took
 
 With no `adj_fctr` column present, the log says so and falls back:
 
 ```
-   2b . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
+   2c . Per-polygon adjustment column 'adj_fctr' not found in shapefile - using basin-wide default (1.0)
 ```
 
-With one, you get the factors that were actually applied:
+With overrides in the rates file, step `2a` says how many it read and step
+`2c` reports the factors that were actually applied:
 
 ```
-   2b . Rasterizing per-polygon adjustment factors (column 'adj_fctr') ...
+   2a . Read 3 'adj_fctr' override(s) from 053_PineValley_rates_adjust.shp
+   2c . Rasterizing per-polygon adjustment factors (column 'adj_fctr') ...
     expert adjustment ACTIVE - basin default: 1.0
-    adjustment factors in treatment zone - min: 0.500  max: 1.000  mean: 0.940
+    adjustment factors in treatment zone - min: 0.500  max: 1.000  mean: 0.943
 ```
 
 The `adj_factor` column in `{key}_polygon_summary.csv` then shows what each
@@ -655,39 +699,43 @@ polygon received.
 **The downward-only cap cannot be overridden.** The adjusted rate can never
 exceed the original input ETg. The cap is applied per pixel, after the
 adjustment and before feathering. Setting `adj_fctr = 3.0` on three Pine Valley
-cropland polygons tripled nothing: each pixel pinned at its own input value, so
-the polygon mean rose toward but stayed under the input mean (polygon 14:
-baseline 0.7551, tripled and capped to a mean of 1.7655 against an input of
-1.8012). Capped pixels went from 6,052 to 9,776 and the basin figure moved from
--43.40% to -34.97%. A large `adj_fctr` is a blunt way of saying "barely change
-this polygon"; if that is what you mean, use the next section instead.
+cropland polygons (14, 15 and 27) tripled nothing: each pixel pinned at its
+own input value, so the polygon mean rose toward but stayed under the input
+mean (polygon 14: baseline 0.7579, tripled and capped to a mean of 1.7655
+against an input of 1.8012). Capped pixels went from 6,444 to 10,168 and the
+basin figure moved from -43.05% to -34.90%. A large `adj_fctr` is a blunt way
+of saying "barely change this polygon"; if that is what you mean, use
+`fixed_rt` instead, which is the one override the cap does not apply to.
 
-**Adjustments are local.** `adj_fctr = 0.5` on three polygons moved exactly
-those three, each landing at about half its previous value, and left the other
-148 rows identical.
+**Adjustments are local.** `adj_fctr = 0.5` on the same three polygons moved
+exactly those three, each landing at half its previous value (polygon 14:
+0.7579 to 0.3790), and left the other 148 rows identical.
 
 ### Choosing which polygons get treated at all
 
-A polygon is treated when `scale_fctr > 0` **or** `rplc_rt > 0`. Only the sign
-matters.
+A polygon is treated when any of three columns is above 0. `fixed_rt` burns
+that value in as-is; `bsnAv_flag` fills with the basin-wide training mean; and
+`scale_fctr` or `rplc_rt` (the `attr_treat` list) fill with the modeled rate.
+`fixed_rt` wins over `bsnAv_flag`, which wins over the other two. For the two
+legacy columns only the sign matters.
 
 > **The magnitude of `scale_fctr` and `rplc_rt` is ignored.** They are on/off
 > triggers, nothing more. Multiplying both by ten across the whole Pine Valley
 > shapefile left every raster, the log, the metadata and every modeled column
-> identical, and the same -43.40%. This is the likeliest thing for someone
+> identical, and the same -43.05%. This is the likeliest thing for someone
 > coming from the legacy workflow to get wrong: `rplc_rt` used to be the value
 > burned into the raster, and it no longer is. The fill value comes from the
 > model, scaled only by `adj_fctr` and `baseline_adjust`. (The magnitude does
 > still appear in the `legacy_rplc_rt` and `baseline_minus_legacy` review
 > columns, which simply report it.)
 
-To stop a polygon being replaced, set both columns to 0. It moves to the
-`52 untouched` count and its interior keeps the raw ETg.
+To stop a polygon being replaced, set every one of those columns to 0. It
+moves to the `42 untouched` count and its interior keeps the raw ETg.
 
 **An untouched polygon is not necessarily an unchanged one.** Feathering
 reaches roughly 250 m outside each treated boundary, so a neighbour's collar
 can still pull an untouched polygon's edge pixels down. In the Pine Valley run,
-35 of the 51 `treatment = none` polygons have `mean_final_ETg` below
+32 of the 41 `treatment = none` polygons have `mean_final_ETg` below
 `mean_input_ETg` for exactly that reason (polygon 1: 0.9258 in, 0.7044 out).
 Only the interior is guaranteed untouched. Set `feather_width_px = 0` if you
 need a hard boundary.
@@ -727,24 +775,27 @@ one.
 
 ## Reference numbers
 
-Verified 2026-07-29 against the inputs named at the top, all parameters at
-their defaults.
+Verified 2026-10-07 with version 1.1.0 against the inputs named at the top,
+all parameters at their defaults. (Runs before 1.1.0 treated 100 polygons, not
+110, because `bsnAv_flag` was ignored; every number below moved a little when
+that changed.)
 
 | Quantity | Expected |
 |---|---|
 | Grid | 2853 x 970, EPSG:32611, 30 m |
 | Valid ETg pixels | 213,442 |
-| Treatment polygons | 100 treated, 52 untouched |
-| Treatment-zone pixels (after 90 m buffer) | 49,592 |
+| Treatment polygons | 110 treated (100 modeled, 10 basin-average), 42 untouched |
+| Treatment-zone pixels (after 90 m buffer) | 52,616 (49,333 modeled, 3,283 basin-average) |
 | NWI basin boundary pixels | 2,138,982 |
-| Valid training pixels | 165,811 |
+| Valid training pixels | 162,998 |
 | BpS classes in training | 15 |
 | Baseline range | 0.1509 to 1.9094 ft |
-| Downward-only cap applied | 6,052 px |
-| Treatment mean, original to final | 1.372 to 0.777 ft |
-| Treatment-zone volume change | -43.40% |
-| Basin-wide volume change | -18.80% |
-| Total area / volume | 45,172.40 ac / 27,331.23 ac-ft |
+| Basin-average fill value | 0.5541 ft |
+| Downward-only cap applied | 6,444 px |
+| Treatment mean, original to final | 1.339 to 0.763 ft |
+| Treatment-zone volume change | -43.05% |
+| Basin-wide volume change | -19.25% |
+| Total area / volume | 45,172.40 ac / 27,175.31 ac-ft |
 | Runtime, fill only | 10 to 15 s |
 | `output/` size | about 5.6 MB |
 
@@ -767,7 +818,9 @@ change, means something is actually wrong: work through the table below.
 | `valid training pixels` in the hundreds or low thousands | Same cause as above, or a CRS mismatch between the ETg raster and the boundary. | Check step 4 of the log for which boundary was used and how many pixels it covered. |
 | `ERROR: none of the attr_treat columns [...] found` | The shapefile lacks every trigger column. | Add `scale_fctr` or `rplc_rt`, or list the column you do have in `[treatment] attr_treat`. |
 | `053_PineValley_SKIPPED.txt` appears | Fewer than 50 training pixels survived. | Almost always a boundary or CRS problem, not a genuinely small basin. |
-| Treatment-zone volume change is positive | The fill added ETg. The downward-only cap and the feather clip both run after the expert adjustment, so this should not be reachable. | Do not use the output. Check `run_metadata.txt` against the reference numbers and report it. |
+| Treatment-zone volume change is positive | The fill added ETg. For modeled and basin-average fills the downward-only cap and the feather clip make this unreachable; a `fixed_rt` polygon can raise it on purpose. | If `polygons_fixed` in `run_metadata.txt` is 0, do not use the output; check the metadata against the reference numbers and report it. Otherwise look at the fixed rates in the polygon summary. |
+| A polygon was flagged by `flag_irrigated.py` but came out untouched | The fill reads the master shapefile, not the `_autoflag.shp` copy, unless `config.toml` points at the copy and lists `autoflag` in `attr_treat`. | Either make those two config changes, or set `rplc_rt` / `bsnAv_flag` on the polygon in the master shapefile. See ADJUSTING_RATES.md. |
+| A lake or other hand-rated polygon came out near 0 | The modeled fill uses the BpS class, and LANDFIRE often calls open water shrubland. | Put the rate in `fixed_rt` (master shapefile or `rates_adjust.shp`) and re-run. |
 | BpS colours don't load in QGIS | The `.tif` had no embedded colour table (no gdal at prep time). | Layer Properties, Symbology, Load Style, pick `input/BpS.qml`. |
 | `UnicodeEncodeError: 'charmap' codec can't encode character` on Windows | A non-ASCII character reached stdout. Windows uses cp1252, not UTF-8, whenever output is redirected or captured, so this hits `pytest` and `python ... > log.txt` but not the interactive console. | Fixed in v1.0.2; the source is now pure ASCII and `pytest` guards it. If you see it in your own edit, replace the character with an ASCII equivalent. |
 | `DeprecationWarning: Setting the shape on a NumPy array ... NumPy 2.5` | Raised from inside `rasterio` on `src.read()`, not from this code. | Harmless today. Update `rasterio`, or pin `numpy<2.5`, before it becomes an error in a later NumPy. |

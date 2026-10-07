@@ -172,6 +172,7 @@ project/
     README.md               This file
     WALKTHROUGH.md          Step-by-step guide for new users
     COOKBOOK_PineValley.md  Worked example: one basin, real output, expected numbers
+    ADJUSTING_RATES.md      Plain-language guide to the flag and rate columns
     Sample_Commands.txt     Copy-paste command reference
     ETg_fill_methodology.docx  Methodology write-up
     AI_DISCLOSURE.md        AI-assisted development disclosure
@@ -186,6 +187,11 @@ New to this workflow? Run [COOKBOOK_PineValley.md](COOKBOOK_PineValley.md)
 first. It walks one basin end to end with the console output printed beside
 every command and the numbers a correct run produces, so you can confirm your
 install before trusting a basin you don't already know the answer for.
+
+Reviewing results and changing what the fill does to a polygon? Start with
+[ADJUSTING_RATES.md](ADJUSTING_RATES.md). It covers every editable column
+(`rplc_rt`, `bsnAv_flag`, `fixed_rt`, `adj_fctr`, `analyst`) in one place,
+with no config editing.
 
 ### 1. Install dependencies
 
@@ -609,9 +615,9 @@ out-of-basin areas) are automatically skipped, with a `_SKIPPED.txt` marker.
 For a custom basin with no `boundary_shp`, the training boundary comes from the
 treatment shapefile. That is only equivalent to a basin outline when the ET units
 tile the basin. Running Pine Valley both ways makes the difference concrete: via
-the NWI polygon the model trains on 165,811 pixels and the treatment-zone volume
-change is -43.4%; via the treatment shapefile alone (which covers about 2% of the
-basin) it trains on 13,688 pixels and reports -31.7%. Watch the `valid training
+the NWI polygon the model trains on 162,998 pixels and the treatment-zone volume
+change is -43.1%; via the treatment shapefile alone (which covers about 2% of the
+basin) it trains on 11,600 pixels and reports -30.0%. Watch the `valid training
 pixels` line and the boundary-coverage warning in the log.
 
 

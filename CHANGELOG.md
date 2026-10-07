@@ -28,6 +28,8 @@ All notable changes to this project are documented in this file.
   the polygon count per mode.
 - `tests/test_treatment_modes.py` (7 tests) and `modes=True` in
   `tests/synth_data.py`.
+- `ADJUSTING_RATES.md`: a plain-language guide for analysts to every column
+  they can edit, which file it lives in, and how to check the result.
 - **`flag_irrigated.py`: an explicit `analyst` column** replaces the
   inferred-override scheme.  The output now carries `suggested` (the
   thresholds' call, recomputed every run), `analyst` (-1 = go with the
